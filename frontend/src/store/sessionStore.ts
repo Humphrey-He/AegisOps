@@ -1,14 +1,20 @@
 import { useEffect } from "react";
 import { create } from "zustand";
+import { mockService } from "../mocks/service";
+import type { AuthSession, User } from "../types/models";
 
-const SESSION_STORAGE_KEY = "aegisops-session";
+const SESSION_STORAGE_KEY = "aegisops-mvp-session";
 
-type SessionState = {
-  bootstrapped: boolean;
+type SessionStore = {
   token: string | null;
-  bootstrapSession: () => void;
-  setSession: (token: string | null) => void;
+  user: User | null;
+  permissions: string[];
+  initialized: boolean;
+  bootstrapped: boolean;
+  setSession: (payload: AuthSession) => void;
   clearSession: () => void;
+  setInitialized: (initialized: boolean) => void;
+  setBootstrapped: (bootstrapped: boolean) => void;
 };
 
 function readStoredToken() {
@@ -18,37 +24,77 @@ function readStoredToken() {
   return window.localStorage.getItem(SESSION_STORAGE_KEY);
 }
 
-function writeStoredToken(token: string | null) {
+function persistToken(token: string | null) {
   if (typeof window === "undefined") {
     return;
   }
-  if (token) {
-    window.localStorage.setItem(SESSION_STORAGE_KEY, token);
+  if (!token) {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
     return;
   }
-  window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  window.localStorage.setItem(SESSION_STORAGE_KEY, token);
 }
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionStore>((set) => ({
+  token: readStoredToken(),
+  user: null,
+  permissions: [],
+  initialized: false,
   bootstrapped: false,
-  token: null,
-  bootstrapSession: () => {
-    set({ token: readStoredToken(), bootstrapped: true });
-  },
-  setSession: (token) => {
-    writeStoredToken(token);
-    set({ token, bootstrapped: true });
+  setSession: ({ token, user, permissions }) => {
+    persistToken(token);
+    set({ token, user, permissions });
   },
   clearSession: () => {
-    writeStoredToken(null);
-    set({ token: null, bootstrapped: true });
+    persistToken(null);
+    set({ token: null, user: null, permissions: [] });
   },
+  setInitialized: (initialized) => set({ initialized }),
+  setBootstrapped: (bootstrapped) => set({ bootstrapped }),
 }));
 
 export function useBootstrapSession() {
-  const bootstrapSession = useSessionStore((state) => state.bootstrapSession);
+  const setInitialized = useSessionStore((state) => state.setInitialized);
+  const setBootstrapped = useSessionStore((state) => state.setBootstrapped);
+  const setSession = useSessionStore((state) => state.setSession);
+  const clearSession = useSessionStore((state) => state.clearSession);
 
   useEffect(() => {
-    bootstrapSession();
-  }, [bootstrapSession]);
+    let mounted = true;
+
+    async function bootstrap() {
+      try {
+        const setupStatus = await mockService.getSetupStatus();
+        if (mounted) {
+          setInitialized(setupStatus.initialized);
+        }
+        const token = useSessionStore.getState().token;
+        if (setupStatus.initialized && token) {
+          try {
+            const result = await mockService.me(token);
+            if (mounted) {
+              setSession({
+                token,
+                user: result.user,
+                permissions: result.permissions,
+              });
+            }
+          } catch {
+            if (mounted) {
+              clearSession();
+            }
+          }
+        }
+      } finally {
+        if (mounted) {
+          setBootstrapped(true);
+        }
+      }
+    }
+
+    void bootstrap();
+    return () => {
+      mounted = false;
+    };
+  }, [clearSession, setBootstrapped, setInitialized, setSession]);
 }

@@ -2,20 +2,21 @@ import { API_BASE_URL } from "./config";
 import { ApiError, type ApiResponse } from "../types/api";
 import { useSessionStore } from "../store/sessionStore";
 
-type RequestOptions = RequestInit & {
+type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const token = useSessionStore.getState().token;
+  const { body, headers, ...rest } = options;
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
+    ...rest,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers ?? {}),
+      ...(headers ?? {}),
     },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
   let payload: ApiResponse<T> | null = null;

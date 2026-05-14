@@ -12,6 +12,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { dashboardApi } from "../../lib/api";
+import { ApiError } from "../../types/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { formatDateTime } from "../../lib/format";
 import { ErrorState } from "../../components/ErrorState";
@@ -30,7 +31,7 @@ export function DashboardPage() {
     return (
       <ErrorState
         message={summaryQuery.error.message}
-        traceId={"traceId" in summaryQuery.error ? summaryQuery.error.traceId : undefined}
+        traceId={summaryQuery.error instanceof ApiError ? summaryQuery.error.traceId : undefined}
         onRetry={() => void summaryQuery.refetch()}
       />
     );

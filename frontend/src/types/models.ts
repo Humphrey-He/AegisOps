@@ -141,6 +141,26 @@ export type TerminalSession = {
   welcomeLines: string[];
 };
 
+export type SetupStatus = {
+  initialized: boolean;
+};
+
+export type AuthSession = {
+  token: string;
+  user: User;
+  permissions: string[];
+};
+
+export type CurrentUserPayload = {
+  user: User;
+  permissions: string[];
+};
+
+export type HealthStatus = {
+  status: "ok";
+  mode: "mock" | "api";
+};
+
 export type AdminSetupInput = {
   username: string;
   password: string;

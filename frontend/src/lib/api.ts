@@ -4,11 +4,24 @@ import { mockService } from "../mocks/service";
 import { useSessionStore } from "../store/sessionStore";
 import type {
   AdminSetupInput,
+  AuthSession,
+  AuditLog,
+  ContainerItem,
+  CurrentUserPayload,
+  DashboardSummary,
+  DockerNode,
   DockerNodeInput,
+  Host,
   HostInput,
   LoginInput,
+  Role,
   RoleInput,
+  Secret,
   SecretInputPayload,
+  SetupStatus,
+  Task,
+  TerminalSession,
+  User,
   UserInput,
 } from "../types/models";
 
@@ -17,137 +30,143 @@ function token() {
 }
 
 export const authApi = {
-  getSetupStatus: async () => {
-    return USE_MOCK ? mockService.getSetupStatus() : http.get<{ initialized: boolean }>("/auth/setup-status");
+  getSetupStatus: async (): Promise<SetupStatus> => {
+    return USE_MOCK ? mockService.getSetupStatus() : http.get<SetupStatus>("/auth/setup-status");
   },
-  initAdmin: async (payload: AdminSetupInput) => {
-    return USE_MOCK ? mockService.initAdmin(payload) : http.post("/auth/setup", payload);
+  initAdmin: async (payload: AdminSetupInput): Promise<{ created: boolean }> => {
+    return USE_MOCK ? mockService.initAdmin(payload) : http.post<{ created: boolean }>("/auth/setup", payload);
   },
-  login: async (payload: LoginInput) => {
-    return USE_MOCK ? mockService.login(payload) : http.post("/auth/login", payload);
+  login: async (payload: LoginInput): Promise<AuthSession> => {
+    return USE_MOCK ? mockService.login(payload) : http.post<AuthSession>("/auth/login", payload);
   },
-  me: async () => {
-    return USE_MOCK ? mockService.me(token()) : http.get("/auth/me");
+  me: async (): Promise<CurrentUserPayload> => {
+    return USE_MOCK ? mockService.me(token()) : http.get<CurrentUserPayload>("/auth/me");
   },
-  logout: async () => {
-    return USE_MOCK ? mockService.logout(token()) : http.post("/auth/logout");
+  logout: async (): Promise<{ ok: boolean }> => {
+    return USE_MOCK ? mockService.logout(token()) : http.post<{ ok: boolean }>("/auth/logout");
   },
 };
 
 export const dashboardApi = {
-  summary: async () => {
-    return USE_MOCK ? mockService.dashboardSummary(token()) : http.get("/dashboard/summary");
+  summary: async (): Promise<DashboardSummary> => {
+    return USE_MOCK ? mockService.dashboardSummary(token()) : http.get<DashboardSummary>("/dashboard/summary");
   },
 };
 
 export const usersApi = {
-  list: async (keyword = "") => {
-    return USE_MOCK ? mockService.listUsers(token(), keyword) : http.get(`/users?keyword=${encodeURIComponent(keyword)}`);
+  list: async (keyword = ""): Promise<User[]> => {
+    return USE_MOCK
+      ? mockService.listUsers(token(), keyword)
+      : http.get<User[]>(`/users?keyword=${encodeURIComponent(keyword)}`);
   },
-  save: async (payload: UserInput) => {
+  save: async (payload: UserInput): Promise<User> => {
     if (USE_MOCK) {
       return mockService.saveUser(token(), payload);
     }
-    return payload.id ? http.patch(`/users/${payload.id}`, payload) : http.post("/users", payload);
+    return payload.id ? http.patch<User>(`/users/${payload.id}`, payload) : http.post<User>("/users", payload);
   },
 };
 
 export const rolesApi = {
-  list: async () => {
-    return USE_MOCK ? mockService.listRoles(token()) : http.get("/roles");
+  list: async (): Promise<Role[]> => {
+    return USE_MOCK ? mockService.listRoles(token()) : http.get<Role[]>("/roles");
   },
-  save: async (payload: RoleInput) => {
+  save: async (payload: RoleInput): Promise<Role> => {
     if (USE_MOCK) {
       return mockService.saveRole(token(), payload);
     }
-    return payload.id ? http.patch(`/roles/${payload.id}`, payload) : http.post("/roles", payload);
+    return payload.id ? http.patch<Role>(`/roles/${payload.id}`, payload) : http.post<Role>("/roles", payload);
   },
 };
 
 export const secretsApi = {
-  list: async (keyword = "") => {
-    return USE_MOCK ? mockService.listSecrets(token(), keyword) : http.get(`/secrets?keyword=${encodeURIComponent(keyword)}`);
+  list: async (keyword = ""): Promise<Secret[]> => {
+    return USE_MOCK
+      ? mockService.listSecrets(token(), keyword)
+      : http.get<Secret[]>(`/secrets?keyword=${encodeURIComponent(keyword)}`);
   },
-  save: async (payload: SecretInputPayload) => {
+  save: async (payload: SecretInputPayload): Promise<Secret> => {
     if (USE_MOCK) {
       return mockService.saveSecret(token(), payload);
     }
-    return payload.id ? http.patch(`/secrets/${payload.id}`, payload) : http.post("/secrets", payload);
+    return payload.id ? http.patch<Secret>(`/secrets/${payload.id}`, payload) : http.post<Secret>("/secrets", payload);
   },
 };
 
 export const hostsApi = {
-  list: async (keyword = "") => {
-    return USE_MOCK ? mockService.listHosts(token(), keyword) : http.get(`/hosts?keyword=${encodeURIComponent(keyword)}`);
+  list: async (keyword = ""): Promise<Host[]> => {
+    return USE_MOCK
+      ? mockService.listHosts(token(), keyword)
+      : http.get<Host[]>(`/hosts?keyword=${encodeURIComponent(keyword)}`);
   },
-  save: async (payload: HostInput) => {
+  save: async (payload: HostInput): Promise<Host> => {
     if (USE_MOCK) {
       return mockService.saveHost(token(), payload);
     }
-    return payload.id ? http.patch(`/hosts/${payload.id}`, payload) : http.post("/hosts", payload);
+    return payload.id ? http.patch<Host>(`/hosts/${payload.id}`, payload) : http.post<Host>("/hosts", payload);
   },
-  testSsh: async (hostId: string) => {
-    return USE_MOCK ? mockService.testHostSsh(token(), hostId) : http.post(`/hosts/${hostId}/test-ssh`);
+  testSsh: async (hostId: string): Promise<Task> => {
+    return USE_MOCK ? mockService.testHostSsh(token(), hostId) : http.post<Task>(`/hosts/${hostId}/test-ssh`);
   },
 };
 
 export const terminalApi = {
-  create: async (hostId: string) => {
+  create: async (hostId: string): Promise<TerminalSession> => {
     return USE_MOCK
       ? mockService.createTerminalSession(token(), hostId)
-      : http.post(`/hosts/${hostId}/terminal/sessions`);
+      : http.post<TerminalSession>(`/hosts/${hostId}/terminal/sessions`);
   },
-  detail: async (sessionId: string) => {
+  detail: async (sessionId: string): Promise<TerminalSession> => {
     return USE_MOCK
       ? mockService.getTerminalSession(token(), sessionId)
-      : http.get(`/terminal/sessions/${sessionId}`);
+      : http.get<TerminalSession>(`/terminal/sessions/${sessionId}`);
   },
 };
 
 export const dockerApi = {
-  listNodes: async () => {
-    return USE_MOCK ? mockService.listDockerNodes(token()) : http.get("/docker/nodes");
+  listNodes: async (): Promise<DockerNode[]> => {
+    return USE_MOCK ? mockService.listDockerNodes(token()) : http.get<DockerNode[]>("/docker/nodes");
   },
-  saveNode: async (payload: DockerNodeInput) => {
+  saveNode: async (payload: DockerNodeInput): Promise<DockerNode> => {
     if (USE_MOCK) {
       return mockService.saveDockerNode(token(), payload);
     }
-    return payload.id ? http.patch(`/docker/nodes/${payload.id}`, payload) : http.post("/docker/nodes", payload);
+    return payload.id ? http.patch<DockerNode>(`/docker/nodes/${payload.id}`, payload) : http.post<DockerNode>("/docker/nodes", payload);
   },
-  testNode: async (nodeId: string) => {
-    return USE_MOCK ? mockService.testDockerNode(token(), nodeId) : http.post(`/docker/nodes/${nodeId}/test`);
+  testNode: async (nodeId: string): Promise<Task> => {
+    return USE_MOCK ? mockService.testDockerNode(token(), nodeId) : http.post<Task>(`/docker/nodes/${nodeId}/test`);
   },
-  getNode: async (nodeId: string) => {
-    return USE_MOCK ? mockService.getDockerNode(token(), nodeId) : http.get(`/docker/nodes/${nodeId}`);
+  getNode: async (nodeId: string): Promise<DockerNode> => {
+    return USE_MOCK ? mockService.getDockerNode(token(), nodeId) : http.get<DockerNode>(`/docker/nodes/${nodeId}`);
   },
-  listContainers: async (nodeId: string) => {
+  listContainers: async (nodeId: string): Promise<ContainerItem[]> => {
     return USE_MOCK
       ? mockService.listContainers(token(), nodeId)
-      : http.get(`/docker/nodes/${nodeId}/containers`);
+      : http.get<ContainerItem[]>(`/docker/nodes/${nodeId}/containers`);
   },
-  getContainerLogs: async (containerId: string) => {
+  getContainerLogs: async (containerId: string): Promise<string[]> => {
     return USE_MOCK
       ? mockService.getContainerLogs(token(), containerId)
-      : http.get(`/docker/containers/${containerId}/logs`);
+      : http.get<string[]>(`/docker/containers/${containerId}/logs`);
   },
-  runContainerAction: async (nodeId: string, containerId: string, action: "start" | "stop" | "restart") => {
+  runContainerAction: async (nodeId: string, containerId: string, action: "start" | "stop" | "restart"): Promise<Task> => {
     return USE_MOCK
       ? mockService.performContainerAction(token(), nodeId, containerId, action)
-      : http.post(`/docker/nodes/${nodeId}/containers/${containerId}/${action}`);
+      : http.post<Task>(`/docker/nodes/${nodeId}/containers/${containerId}/${action}`);
   },
 };
 
 export const tasksApi = {
-  list: async () => {
-    return USE_MOCK ? mockService.listTasks(token()) : http.get("/tasks");
+  list: async (): Promise<Task[]> => {
+    return USE_MOCK ? mockService.listTasks(token()) : http.get<Task[]>("/tasks");
   },
-  detail: async (taskId: string) => {
-    return USE_MOCK ? mockService.getTask(token(), taskId) : http.get(`/tasks/${taskId}`);
+  detail: async (taskId: string): Promise<Task> => {
+    return USE_MOCK ? mockService.getTask(token(), taskId) : http.get<Task>(`/tasks/${taskId}`);
   },
 };
 
 export const auditsApi = {
-  list: async () => {
-    return USE_MOCK ? mockService.listAudits(token()) : http.get("/audits");
+  list: async (): Promise<AuditLog[]> => {
+    return USE_MOCK ? mockService.listAudits(token()) : http.get<AuditLog[]>("/audits");
   },
 };

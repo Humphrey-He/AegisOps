@@ -3,10 +3,8 @@ import {
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DesktopOutlined,
-  LockOutlined,
   TeamOutlined,
   UnorderedListOutlined,
-  UserSwitchOutlined,
 } from "@ant-design/icons";
 import type { ReactNode } from "react";
 
@@ -93,7 +91,7 @@ export const hiddenNavTitles: Record<string, string> = {
   "/404": "页面不存在",
 };
 
-export function filterNavItems(items: NavItem[], permissions: string[]) {
+export function filterNavItems(items: NavItem[], permissions: string[]): NavItem[] {
   return items
     .map((item) => {
       if (item.children) {

@@ -36,9 +36,6 @@ export function TerminalFrame({ title, lines, status }: TerminalFrameProps) {
     terminal.writeln(`----------------------------------------`);
     lines.forEach((line) => terminal.writeln(line));
     terminal.writeln("");
-    terminal.prompt = () => {
-      terminal.write("\r\n$ ");
-    };
     terminal.write("$ ");
 
     let command = "";
