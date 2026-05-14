@@ -1,0 +1,9 @@
+.gocache/
+.idea/
+data/
+*.db
+*.db-shm
+*.db-wal
+tmp/
+dist/
+node_modules/
