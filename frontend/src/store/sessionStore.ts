@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { create } from "zustand";
+import { API_BASE_URL, USE_MOCK } from "../lib/config";
 import { mockService } from "../mocks/service";
-import type { AuthSession, User } from "../types/models";
+import type { AuthSession, CurrentUserPayload, User } from "../types/models";
 
 const SESSION_STORAGE_KEY = "aegisops-mvp-session";
 
@@ -35,6 +36,41 @@ function persistToken(token: string | null) {
   window.localStorage.setItem(SESSION_STORAGE_KEY, token);
 }
 
+async function fetchCurrentUser(token: string): Promise<CurrentUserPayload> {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error("session expired");
+  }
+  const payload = await response.json();
+  const backendUser = payload.data;
+  const permissions: string[] = backendUser.isAdmin
+    ? ["*"]
+    : Array.from(
+        new Set<string>(
+          (backendUser.roles ?? [])
+            .flatMap((role: { permissions?: { code: string }[] }) => role.permissions ?? [])
+            .map((permission: { code: string }) => permission.code),
+        ),
+      );
+  return {
+    user: {
+      id: String(backendUser.id),
+      username: backendUser.username,
+      displayName: backendUser.displayName || backendUser.username,
+      email: backendUser.email || "",
+      status: backendUser.status === "disabled" ? "DISABLED" : "ACTIVE",
+      roleIds: (backendUser.roles ?? []).map((role: { id: number }) => String(role.id)),
+      createdAt: backendUser.createdAt,
+      lastLoginAt: backendUser.lastLoginAt,
+    },
+    permissions,
+  };
+}
+
 export const useSessionStore = create<SessionStore>((set) => ({
   token: readStoredToken(),
   user: null,
@@ -64,14 +100,14 @@ export function useBootstrapSession() {
 
     async function bootstrap() {
       try {
-        const setupStatus = await mockService.getSetupStatus();
+        const setupStatus = USE_MOCK ? await mockService.getSetupStatus() : { initialized: true };
         if (mounted) {
           setInitialized(setupStatus.initialized);
         }
         const token = useSessionStore.getState().token;
         if (setupStatus.initialized && token) {
           try {
-            const result = await mockService.me(token);
+            const result = USE_MOCK ? await mockService.me(token) : await fetchCurrentUser(token);
             if (mounted) {
               setSession({
                 token,

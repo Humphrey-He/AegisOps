@@ -29,21 +29,142 @@ function token() {
   return useSessionStore.getState().token;
 }
 
+type BackendPermission = {
+  id: number;
+  name?: string;
+  code: string;
+  resource?: string;
+  action?: string;
+  description?: string;
+};
+
+type BackendRole = {
+  id: number;
+  name: string;
+  code: string;
+  description?: string;
+  permissions?: BackendPermission[];
+  createdAt: string;
+};
+
+type BackendPage<T> = {
+  items: T[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  offset?: number;
+};
+
+type BackendUser = {
+  id: number;
+  username: string;
+  displayName?: string;
+  email?: string;
+  status: "active" | "disabled" | "ACTIVE" | "DISABLED";
+  isAdmin?: boolean;
+  roles?: BackendRole[];
+  createdAt: string;
+  lastLoginAt?: string;
+};
+
+type BackendTokenPair = {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+};
+
+type BackendLoginResult = {
+  user: BackendUser;
+  tokens: BackendTokenPair;
+};
+
+function normalizeUserStatus(status: BackendUser["status"]): User["status"] {
+  return status === "disabled" || status === "DISABLED" ? "DISABLED" : "ACTIVE";
+}
+
+function mapBackendUser(user: BackendUser): User {
+  return {
+    id: String(user.id),
+    username: user.username,
+    displayName: user.displayName || user.username,
+    email: user.email || "",
+    status: normalizeUserStatus(user.status),
+    roleIds: (user.roles ?? []).map((role) => String(role.id)),
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+  };
+}
+
+function mapBackendRole(role: BackendRole): Role {
+  return {
+    id: String(role.id),
+    name: role.name,
+    description: role.description || "",
+    permissions: (role.permissions ?? []).map((permission) => permission.code),
+    builtIn: role.code === "admin",
+    createdAt: role.createdAt,
+  };
+}
+
+function permissionsFromUser(user: BackendUser): string[] {
+  if (user.isAdmin) {
+    return ["*"];
+  }
+  return Array.from(
+    new Set((user.roles ?? []).flatMap((role) => role.permissions ?? []).map((permission) => permission.code)),
+  );
+}
+
+function pageItems<T>(page: BackendPage<T> | T[]): T[] {
+  return Array.isArray(page) ? page : page.items ?? [];
+}
+
+function mapLoginResult(result: BackendLoginResult): AuthSession {
+  return {
+    token: result.tokens.accessToken,
+    user: mapBackendUser(result.user),
+    permissions: permissionsFromUser(result.user),
+  };
+}
+
+function mapCurrentUser(user: BackendUser): CurrentUserPayload {
+  return {
+    user: mapBackendUser(user),
+    permissions: permissionsFromUser(user),
+  };
+}
+
 export const authApi = {
   getSetupStatus: async (): Promise<SetupStatus> => {
-    return USE_MOCK ? mockService.getSetupStatus() : http.get<SetupStatus>("/auth/setup-status");
+    if (USE_MOCK) {
+      return mockService.getSetupStatus();
+    }
+    return { initialized: true };
   },
   initAdmin: async (payload: AdminSetupInput): Promise<{ created: boolean }> => {
-    return USE_MOCK ? mockService.initAdmin(payload) : http.post<{ created: boolean }>("/auth/setup", payload);
+    return USE_MOCK ? mockService.initAdmin(payload) : Promise.resolve({ created: false });
   },
   login: async (payload: LoginInput): Promise<AuthSession> => {
-    return USE_MOCK ? mockService.login(payload) : http.post<AuthSession>("/auth/login", payload);
+    if (USE_MOCK) {
+      return mockService.login(payload);
+    }
+    const result = await http.post<BackendLoginResult>("/auth/login", payload);
+    return mapLoginResult(result);
   },
   me: async (): Promise<CurrentUserPayload> => {
-    return USE_MOCK ? mockService.me(token()) : http.get<CurrentUserPayload>("/auth/me");
+    if (USE_MOCK) {
+      return mockService.me(token());
+    }
+    const user = await http.get<BackendUser>("/auth/me");
+    return mapCurrentUser(user);
   },
   logout: async (): Promise<{ ok: boolean }> => {
-    return USE_MOCK ? mockService.logout(token()) : http.post<{ ok: boolean }>("/auth/logout");
+    if (USE_MOCK) {
+      return mockService.logout(token());
+    }
+    await http.post<void>("/auth/logout");
+    return { ok: true };
   },
 };
 
@@ -55,27 +176,53 @@ export const dashboardApi = {
 
 export const usersApi = {
   list: async (keyword = ""): Promise<User[]> => {
-    return USE_MOCK
-      ? mockService.listUsers(token(), keyword)
-      : http.get<User[]>(`/users?keyword=${encodeURIComponent(keyword)}`);
+    if (USE_MOCK) {
+      return mockService.listUsers(token(), keyword);
+    }
+    const page = await http.get<BackendPage<BackendUser>>(`/users?keyword=${encodeURIComponent(keyword)}`);
+    return pageItems(page).map(mapBackendUser);
   },
   save: async (payload: UserInput): Promise<User> => {
     if (USE_MOCK) {
       return mockService.saveUser(token(), payload);
     }
-    return payload.id ? http.patch<User>(`/users/${payload.id}`, payload) : http.post<User>("/users", payload);
+    const backendPayload = {
+      username: payload.username,
+      password: payload.password,
+      displayName: payload.displayName,
+      email: payload.email,
+      status: payload.status === "DISABLED" ? "disabled" : "active",
+      roleIds: payload.roleIds.map((id) => Number(id)),
+    };
+    const user = payload.id
+      ? await http.patch<BackendUser>(`/users/${payload.id}`, backendPayload)
+      : await http.post<BackendUser>("/users", backendPayload);
+    return mapBackendUser(user);
   },
 };
 
 export const rolesApi = {
   list: async (): Promise<Role[]> => {
-    return USE_MOCK ? mockService.listRoles(token()) : http.get<Role[]>("/roles");
+    if (USE_MOCK) {
+      return mockService.listRoles(token());
+    }
+    const page = await http.get<BackendPage<BackendRole>>("/roles");
+    return pageItems(page).map(mapBackendRole);
   },
   save: async (payload: RoleInput): Promise<Role> => {
     if (USE_MOCK) {
       return mockService.saveRole(token(), payload);
     }
-    return payload.id ? http.patch<Role>(`/roles/${payload.id}`, payload) : http.post<Role>("/roles", payload);
+    const backendPayload = {
+      name: payload.name,
+      code: payload.name.toLowerCase().replace(/\s+/g, "_"),
+      description: payload.description,
+      permissionIds: [],
+    };
+    const role = payload.id
+      ? await http.patch<BackendRole>(`/roles/${payload.id}`, backendPayload)
+      : await http.post<BackendRole>("/roles", backendPayload);
+    return mapBackendRole(role);
   },
 };
 

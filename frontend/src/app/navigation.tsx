@@ -92,6 +92,9 @@ export const hiddenNavTitles: Record<string, string> = {
 };
 
 export function filterNavItems(items: NavItem[], permissions: string[]): NavItem[] {
+  if (permissions.includes("*")) {
+    return items;
+  }
   return items
     .map((item) => {
       if (item.children) {

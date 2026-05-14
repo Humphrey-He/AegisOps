@@ -15,7 +15,7 @@ export function PermissionGuard({
   children,
 }: PermissionGuardProps) {
   const permissions = useSessionStore((state) => state.permissions);
-  if (!permission || permissions.includes(permission)) {
+  if (!permission || permissions.includes("*") || permissions.includes(permission)) {
     return <>{children}</>;
   }
   if (forbiddenPage) {

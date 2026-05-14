@@ -10,6 +10,7 @@ import type { MenuProps } from "antd";
 import { useMemo, useState } from "react";
 import { Link, Outlet, useLocation, useMatches, useNavigate } from "react-router-dom";
 import { authApi } from "../lib/api";
+import { USE_MOCK } from "../lib/config";
 import { filterNavItems, findFirstPath, navItems, type NavItem } from "../app/navigation";
 import { useSessionStore } from "../store/sessionStore";
 
@@ -106,7 +107,7 @@ export function AppShell() {
             <Breadcrumb items={breadcrumbItems} />
           </Space>
           <Space size={16}>
-            <Tag color="cyan">Mock API</Tag>
+            <Tag color={USE_MOCK ? "cyan" : "green"}>{USE_MOCK ? "Mock API" : "Real API"}</Tag>
             <Tag>{defaultTarget}</Tag>
             <Dropdown menu={{ items: userMenu }} placement="bottomRight">
               <Space style={{ cursor: "pointer" }}>

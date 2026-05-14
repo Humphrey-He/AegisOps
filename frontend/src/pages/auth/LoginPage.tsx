@@ -47,7 +47,7 @@ export function LoginPage() {
           <Form
             layout="vertical"
             form={form}
-            initialValues={{ username: "admin", password: "AegisOps123!" }}
+            initialValues={{ username: "admin", password: "admin123456" }}
             onFinish={(values) => loginMutation.mutate(values)}
           >
             <Form.Item label="用户名" name="username" rules={[{ required: true, message: "请输入用户名" }]}>

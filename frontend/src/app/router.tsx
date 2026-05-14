@@ -1,34 +1,150 @@
-import { Button, Result, Space, Typography } from "antd";
-import { createBrowserRouter } from "react-router-dom";
+import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 
+import { AppShell } from "../layouts/AppShell";
+import { LoginPage } from "../pages/auth/LoginPage";
+import { HostsPage } from "../pages/assets/HostsPage";
+import { SecretsPage } from "../pages/secrets/SecretsPage";
+import { DockerNodesPage } from "../pages/docker/DockerNodesPage";
+import { DockerNodeDetailPage } from "../pages/docker/DockerNodeDetailPage";
+import { TasksPage } from "../pages/tasks/TasksPage";
+import { TaskDetailPage } from "../pages/tasks/TaskDetailPage";
+import { AuditsPage } from "../pages/audits/AuditsPage";
+import { UsersPage } from "../pages/system/UsersPage";
+import { RolesPage } from "../pages/system/RolesPage";
+import { ForbiddenPage } from "../pages/errors/ForbiddenPage";
+import { NotFoundPage } from "../pages/errors/NotFoundPage";
 import { useSessionStore } from "../store/sessionStore";
+import { PermissionGuard } from "../components/PermissionGuard";
 
-function HomePage() {
+function RequireAuth() {
   const token = useSessionStore((state) => state.token);
-  const clearSession = useSessionStore((state) => state.clearSession);
+  const location = useLocation();
 
+  if (!token) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  return <AppShell />;
+}
+
+function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
   return (
-    <div className="fullscreen-center">
-      <Result
-        status="info"
-        title="AegisOps console scaffold is ready"
-        subTitle="The frontend foundation is in place and can now be extended with real pages and API wiring."
-        extra={
-          <Space>
-            <Typography.Text type="secondary">
-              {token ? "Cached session found" : "No active session"}
-            </Typography.Text>
-            <Button onClick={clearSession}>Clear session</Button>
-          </Space>
-        }
-      />
-    </div>
+    <PermissionGuard permission={permission} forbiddenPage>
+      {children}
+    </PermissionGuard>
   );
 }
 
 export const router = createBrowserRouter([
   {
+    path: "/login",
+    element: <LoginPage />,
+    handle: { title: "登录" },
+  },
+  {
     path: "/",
-    element: <HomePage />,
+    element: <RequireAuth />,
+    children: [
+      {
+        index: true,
+        element: <Navigate to="/system/users" replace />,
+      },
+      {
+        path: "dashboard",
+        element: <Navigate to="/system/users" replace />,
+        handle: { title: "工作台" },
+      },
+      {
+        path: "assets/hosts",
+        element: (
+          <RequirePermission permission="hosts.view">
+            <HostsPage />
+          </RequirePermission>
+        ),
+        handle: { title: "主机" },
+      },
+      {
+        path: "assets/secrets",
+        element: (
+          <RequirePermission permission="secrets.view">
+            <SecretsPage />
+          </RequirePermission>
+        ),
+        handle: { title: "凭证" },
+      },
+      {
+        path: "docker/nodes",
+        element: (
+          <RequirePermission permission="docker.view">
+            <DockerNodesPage />
+          </RequirePermission>
+        ),
+        handle: { title: "Docker 节点" },
+      },
+      {
+        path: "docker/nodes/:nodeId",
+        element: (
+          <RequirePermission permission="docker.view">
+            <DockerNodeDetailPage />
+          </RequirePermission>
+        ),
+        handle: { title: "Docker 节点详情" },
+      },
+      {
+        path: "tasks",
+        element: (
+          <RequirePermission permission="tasks.view">
+            <TasksPage />
+          </RequirePermission>
+        ),
+        handle: { title: "任务中心" },
+      },
+      {
+        path: "tasks/:taskId",
+        element: (
+          <RequirePermission permission="tasks.view">
+            <TaskDetailPage />
+          </RequirePermission>
+        ),
+        handle: { title: "任务详情" },
+      },
+      {
+        path: "audits",
+        element: (
+          <RequirePermission permission="audits.view">
+            <AuditsPage />
+          </RequirePermission>
+        ),
+        handle: { title: "审计日志" },
+      },
+      {
+        path: "system/users",
+        element: (
+          <RequirePermission permission="users.view">
+            <UsersPage />
+          </RequirePermission>
+        ),
+        handle: { title: "用户" },
+      },
+      {
+        path: "system/roles",
+        element: (
+          <RequirePermission permission="roles.view">
+            <RolesPage />
+          </RequirePermission>
+        ),
+        handle: { title: "角色" },
+      },
+      {
+        path: "403",
+        element: <ForbiddenPage />,
+        handle: { title: "无权限" },
+      },
+      {
+        path: "*",
+        element: <NotFoundPage />,
+        handle: { title: "页面不存在" },
+      },
+    ],
   },
 ]);
