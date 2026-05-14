@@ -1,0 +1,21 @@
+app:
+  name: aegisops
+  env: dev
+
+http:
+  addr: ":8080"
+
+database:
+  driver: sqlite
+  dsn: data/aegisops.db
+
+security:
+  jwt_secret: "change-me-in-production"
+  access_token_ttl: 2h
+  refresh_token_ttl: 168h
+  secret_key: "change-me-32-byte-secret-key!!!!!!"
+
+admin:
+  username: admin
+  password: admin123456
+  email: admin@example.com
