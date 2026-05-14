@@ -57,13 +57,12 @@ export function DockerNodesPage() {
 
   const testMutation = useMutation({
     mutationFn: dockerApi.testNode,
-    onSuccess: async (task) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.dockerNodes }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
-      await message.success("节点检测任务已提交");
-      navigate(`/tasks/${task.id}`);
+      await message.success("节点检测已完成");
     },
     onError: (error) => {
       void message.error(getErrorMessage(error));

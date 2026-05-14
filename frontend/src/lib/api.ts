@@ -113,6 +113,51 @@ type BackendTask = {
   logs?: BackendTaskLog[];
 };
 
+type BackendSecret = {
+  id: string;
+  name: string;
+  type: Secret["type"];
+  description?: string;
+  maskedValue?: string;
+  updatedAt: string;
+};
+
+type BackendHost = {
+  id: string;
+  name: string;
+  address: string;
+  sshPort: number;
+  sshUser?: string;
+  sshSecretId: string;
+  group?: string;
+  tags?: string;
+  status: "ONLINE" | "OFFLINE" | "UNKNOWN" | Host["status"];
+  lastTestAt?: string;
+};
+
+type BackendDockerNode = {
+  id: string;
+  name: string;
+  endpoint: string;
+  authType?: "NONE" | "TLS" | "TOKEN";
+  secretId?: string;
+  description?: string;
+  status: DockerNode["status"];
+  lastTestAt?: string;
+};
+
+type BackendAuditLog = {
+  id: number;
+  username?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  result: "success" | "failure" | AuditLog["result"];
+  message?: string;
+  traceId?: string;
+  createdAt: string;
+};
+
 function normalizeUserStatus(status: BackendUser["status"]): User["status"] {
   return status === "disabled" || status === "DISABLED" ? "DISABLED" : "ACTIVE";
 }
@@ -212,6 +257,91 @@ function mapBackendTask(task: BackendTask): Task {
   };
 }
 
+function mapBackendSecret(secret: BackendSecret): Secret {
+  return {
+    id: secret.id,
+    name: secret.name,
+    type: secret.type,
+    description: secret.description,
+    valueMasked: secret.maskedValue || "******",
+    usedBy: [],
+    updatedAt: secret.updatedAt,
+  };
+}
+
+function mapHostStatus(status: BackendHost["status"]): Host["status"] {
+  if (status === "ONLINE") {
+    return "HEALTHY";
+  }
+  if (status === "OFFLINE") {
+    return "UNREACHABLE";
+  }
+  return status === "TESTING" ? "TESTING" : "UNKNOWN";
+}
+
+function parseTags(tags?: string): string[] {
+  if (!tags) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(tags);
+    if (Array.isArray(parsed)) {
+      return parsed.map(String);
+    }
+  } catch {
+    // Fall through to comma parsing for legacy/plain text tag storage.
+  }
+  return tags
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function serializeTags(tags: string[]): string {
+  return JSON.stringify(tags ?? []);
+}
+
+function mapBackendHost(host: BackendHost): Host {
+  return {
+    id: host.id,
+    name: host.name,
+    address: host.address,
+    port: host.sshPort,
+    secretId: host.sshSecretId,
+    status: mapHostStatus(host.status),
+    tags: parseTags(host.tags),
+    description: host.group,
+    lastCheckedAt: host.lastTestAt,
+  };
+}
+
+function mapBackendDockerNode(node: BackendDockerNode): DockerNode {
+  return {
+    id: node.id,
+    name: node.name,
+    endpoint: node.endpoint,
+    tlsEnabled: node.authType === "TLS",
+    status: node.status,
+    description: node.description,
+    lastCheckedAt: node.lastTestAt,
+    containerCount: 0,
+  };
+}
+
+function mapBackendAudit(audit: BackendAuditLog): AuditLog {
+  return {
+    id: String(audit.id),
+    actor: audit.username || "-",
+    action: audit.action,
+    resourceType: audit.resourceType || "-",
+    resourceName: audit.resourceId || "-",
+    result: audit.result === "success" ? "SUCCESS" : "FAILED",
+    traceId: audit.traceId || "",
+    createdAt: audit.createdAt,
+    summary: audit.message || audit.action,
+  };
+}
+
 export const authApi = {
   getSetupStatus: async (): Promise<SetupStatus> => {
     if (USE_MOCK) {
@@ -305,32 +435,57 @@ export const rolesApi = {
 
 export const secretsApi = {
   list: async (keyword = ""): Promise<Secret[]> => {
-    return USE_MOCK
-      ? mockService.listSecrets(token(), keyword)
-      : http.get<Secret[]>(`/secrets?keyword=${encodeURIComponent(keyword)}`);
+    if (USE_MOCK) {
+      return mockService.listSecrets(token(), keyword);
+    }
+    const page = await http.get<BackendPage<BackendSecret>>(`/secrets?keyword=${encodeURIComponent(keyword)}`);
+    return pageItems(page).map(mapBackendSecret);
   },
   save: async (payload: SecretInputPayload): Promise<Secret> => {
     if (USE_MOCK) {
       return mockService.saveSecret(token(), payload);
     }
-    return payload.id ? http.patch<Secret>(`/secrets/${payload.id}`, payload) : http.post<Secret>("/secrets", payload);
+    const backendPayload = {
+      name: payload.name,
+      type: payload.type,
+      description: payload.description,
+      value: payload.secretValue,
+    };
+    const secret = payload.id
+      ? await http.patch<BackendSecret>(`/secrets/${payload.id}`, backendPayload)
+      : await http.post<BackendSecret>("/secrets", backendPayload);
+    return mapBackendSecret(secret);
   },
 };
 
 export const hostsApi = {
   list: async (keyword = ""): Promise<Host[]> => {
-    return USE_MOCK
-      ? mockService.listHosts(token(), keyword)
-      : http.get<Host[]>(`/hosts?keyword=${encodeURIComponent(keyword)}`);
+    if (USE_MOCK) {
+      return mockService.listHosts(token(), keyword);
+    }
+    const page = await http.get<BackendPage<BackendHost>>(`/hosts?keyword=${encodeURIComponent(keyword)}`);
+    return pageItems(page).map(mapBackendHost);
   },
   save: async (payload: HostInput): Promise<Host> => {
     if (USE_MOCK) {
       return mockService.saveHost(token(), payload);
     }
-    return payload.id ? http.patch<Host>(`/hosts/${payload.id}`, payload) : http.post<Host>("/hosts", payload);
+    const backendPayload = {
+      name: payload.name,
+      address: payload.address,
+      sshPort: payload.port,
+      sshUser: "root",
+      sshSecretId: payload.secretId,
+      group: payload.description,
+      tags: serializeTags(payload.tags),
+    };
+    const host = payload.id
+      ? await http.patch<BackendHost>(`/hosts/${payload.id}`, backendPayload)
+      : await http.post<BackendHost>("/hosts", backendPayload);
+    return mapBackendHost(host);
   },
-  testSsh: async (hostId: string): Promise<Task> => {
-    return USE_MOCK ? mockService.testHostSsh(token(), hostId) : http.post<Task>(`/hosts/${hostId}/test-ssh`);
+  testSsh: async (hostId: string): Promise<{ connected: boolean }> => {
+    return USE_MOCK ? mockService.testHostSsh(token(), hostId).then(() => ({ connected: true })) : http.post<{ connected: boolean }>(`/hosts/${hostId}/test-ssh`);
   },
 };
 
@@ -349,34 +504,59 @@ export const terminalApi = {
 
 export const dockerApi = {
   listNodes: async (): Promise<DockerNode[]> => {
-    return USE_MOCK ? mockService.listDockerNodes(token()) : http.get<DockerNode[]>("/docker/nodes");
+    if (USE_MOCK) {
+      return mockService.listDockerNodes(token());
+    }
+    const page = await http.get<BackendPage<BackendDockerNode>>("/docker/nodes");
+    return pageItems(page).map(mapBackendDockerNode);
   },
   saveNode: async (payload: DockerNodeInput): Promise<DockerNode> => {
     if (USE_MOCK) {
       return mockService.saveDockerNode(token(), payload);
     }
-    return payload.id ? http.patch<DockerNode>(`/docker/nodes/${payload.id}`, payload) : http.post<DockerNode>("/docker/nodes", payload);
+    const backendPayload = {
+      name: payload.name,
+      endpoint: payload.endpoint,
+      authType: payload.tlsEnabled ? "TLS" : "NONE",
+      description: payload.description,
+    };
+    const node = payload.id
+      ? await http.patch<BackendDockerNode>(`/docker/nodes/${payload.id}`, backendPayload)
+      : await http.post<BackendDockerNode>("/docker/nodes", backendPayload);
+    return mapBackendDockerNode(node);
   },
-  testNode: async (nodeId: string): Promise<Task> => {
-    return USE_MOCK ? mockService.testDockerNode(token(), nodeId) : http.post<Task>(`/docker/nodes/${nodeId}/test`);
+  testNode: async (nodeId: string): Promise<{ connected: boolean }> => {
+    return USE_MOCK ? mockService.testDockerNode(token(), nodeId).then(() => ({ connected: true })) : http.post<{ connected: boolean }>(`/docker/nodes/${nodeId}/test`);
   },
   getNode: async (nodeId: string): Promise<DockerNode> => {
-    return USE_MOCK ? mockService.getDockerNode(token(), nodeId) : http.get<DockerNode>(`/docker/nodes/${nodeId}`);
+    if (USE_MOCK) {
+      return mockService.getDockerNode(token(), nodeId);
+    }
+    const node = await http.get<BackendDockerNode>(`/docker/nodes/${nodeId}`);
+    return mapBackendDockerNode(node);
   },
   listContainers: async (nodeId: string): Promise<ContainerItem[]> => {
     return USE_MOCK
       ? mockService.listContainers(token(), nodeId)
       : http.get<ContainerItem[]>(`/docker/nodes/${nodeId}/containers`);
   },
-  getContainerLogs: async (containerId: string): Promise<string[]> => {
-    return USE_MOCK
-      ? mockService.getContainerLogs(token(), containerId)
-      : http.get<string[]>(`/docker/containers/${containerId}/logs`);
+  getContainerLogs: async (nodeId: string, containerId: string): Promise<string[]> => {
+    if (USE_MOCK) {
+      return mockService.getContainerLogs(token(), containerId);
+    }
+    const result = await http.get<{ logs: string }>(`/docker/nodes/${nodeId}/containers/${containerId}/logs`);
+    return result.logs ? result.logs.split(/\r?\n/).filter(Boolean) : [];
   },
-  runContainerAction: async (nodeId: string, containerId: string, action: "start" | "stop" | "restart"): Promise<Task> => {
+  runContainerAction: async (
+    nodeId: string,
+    containerId: string,
+    action: "start" | "stop" | "restart",
+  ): Promise<{ ok: boolean }> => {
     return USE_MOCK
-      ? mockService.performContainerAction(token(), nodeId, containerId, action)
-      : http.post<Task>(`/docker/nodes/${nodeId}/containers/${containerId}/${action}`);
+      ? mockService.performContainerAction(token(), nodeId, containerId, action).then(() => ({ ok: true }))
+      : http.post<{ started?: boolean; stopped?: boolean; restarted?: boolean }>(
+          `/docker/nodes/${nodeId}/containers/${containerId}/${action}`,
+        ).then(() => ({ ok: true }));
   },
 };
 
@@ -399,6 +579,10 @@ export const tasksApi = {
 
 export const auditsApi = {
   list: async (): Promise<AuditLog[]> => {
-    return USE_MOCK ? mockService.listAudits(token()) : http.get<AuditLog[]>("/audits");
+    if (USE_MOCK) {
+      return mockService.listAudits(token());
+    }
+    const page = await http.get<BackendPage<BackendAuditLog>>("/audits");
+    return pageItems(page).map(mapBackendAudit);
   },
 };

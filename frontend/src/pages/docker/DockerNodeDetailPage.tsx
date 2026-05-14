@@ -45,21 +45,20 @@ export function DockerNodeDetailPage() {
 
   const logsQuery = useQuery({
     queryKey: queryKeys.containerLogs(selectedContainer?.id ?? ""),
-    queryFn: () => dockerApi.getContainerLogs(selectedContainer!.id),
+    queryFn: () => dockerApi.getContainerLogs(nodeId, selectedContainer!.id),
     enabled: Boolean(selectedContainer?.id),
   });
 
   const actionMutation = useMutation({
     mutationFn: ({ containerId, action }: { containerId: string; action: "start" | "stop" | "restart" }) =>
       dockerApi.runContainerAction(nodeId, containerId, action),
-    onSuccess: async (task) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.containers(nodeId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
       setDangerAction(null);
-      await message.success("容器动作已提交到任务中心");
-      navigate(`/tasks/${task.id}`);
+      await message.success("容器动作已执行");
     },
   });
 

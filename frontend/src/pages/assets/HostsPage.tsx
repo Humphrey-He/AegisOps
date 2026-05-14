@@ -67,13 +67,12 @@ export function HostsPage() {
 
   const testMutation = useMutation({
     mutationFn: hostsApi.testSsh,
-    onSuccess: async (task) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["hosts"] }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
-      await message.success("SSH 测试任务已提交");
-      navigate(`/tasks/${task.id}`);
+      await message.success("SSH 测试已完成");
     },
     onError: (error) => {
       void message.error(getErrorMessage(error, "SSH 测试提交失败"));

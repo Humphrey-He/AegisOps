@@ -11,6 +11,7 @@ import { TaskDetailPage } from "../pages/tasks/TaskDetailPage";
 import { AuditsPage } from "../pages/audits/AuditsPage";
 import { UsersPage } from "../pages/system/UsersPage";
 import { RolesPage } from "../pages/system/RolesPage";
+import { TerminalPage } from "../pages/terminal/TerminalPage";
 import { ForbiddenPage } from "../pages/errors/ForbiddenPage";
 import { NotFoundPage } from "../pages/errors/NotFoundPage";
 import { useSessionStore } from "../store/sessionStore";
@@ -134,6 +135,15 @@ export const router = createBrowserRouter([
           </RequirePermission>
         ),
         handle: { title: "角色" },
+      },
+      {
+        path: "terminal/:sessionId",
+        element: (
+          <RequirePermission permission="terminal.open">
+            <TerminalPage />
+          </RequirePermission>
+        ),
+        handle: { title: "终端" },
       },
       {
         path: "403",
