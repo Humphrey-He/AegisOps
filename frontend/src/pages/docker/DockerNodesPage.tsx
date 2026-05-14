@@ -6,18 +6,24 @@ import {
   Input,
   Select,
   Space,
+  Tag,
+  Typography,
 } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { dockerApi } from "../../lib/api";
+import { useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { auditsApi, dockerApi, tasksApi } from "../../lib/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
 import { FormDrawer } from "../../components/FormDrawer";
 import { PageHeader } from "../../components/PageHeader";
 import { PermissionGuard } from "../../components/PermissionGuard";
+import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
+import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { StatusBadge } from "../../components/StatusBadge";
+import { formatDateTime } from "../../lib/format";
+import { TaskStatus } from "../../components/TaskStatus";
 import type { DockerNode, DockerNodeInput } from "../../types/models";
 
 type NodeFormValues = {
@@ -32,12 +38,33 @@ export function DockerNodesPage() {
   const [form] = Form.useForm<NodeFormValues>();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<DockerNode | null>(null);
+  const [latestActionText, setLatestActionText] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const selectedNodeId = searchParams.get("selected") ?? "";
 
   const nodesQuery = useQuery({
     queryKey: queryKeys.dockerNodes,
     queryFn: dockerApi.listNodes,
+  });
+  const tasksQuery = useQuery({
+    queryKey: queryKeys.tasks,
+    queryFn: tasksApi.list,
+  });
+  const auditsQuery = useQuery({
+    queryKey: queryKeys.audits,
+    queryFn: auditsApi.list,
+  });
+  const nodeDetailQuery = useQuery({
+    queryKey: queryKeys.dockerNode(selectedNodeId),
+    queryFn: () => dockerApi.getNode(selectedNodeId),
+    enabled: Boolean(selectedNodeId),
+  });
+  const containersQuery = useQuery({
+    queryKey: queryKeys.containers(selectedNodeId),
+    queryFn: () => dockerApi.listContainers(selectedNodeId),
+    enabled: Boolean(selectedNodeId),
   });
 
   const saveMutation = useMutation({
@@ -60,14 +87,39 @@ export function DockerNodesPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.dockerNodes }),
+        selectedNodeId ? queryClient.invalidateQueries({ queryKey: queryKeys.dockerNode(selectedNodeId) }) : Promise.resolve(),
+        selectedNodeId ? queryClient.invalidateQueries({ queryKey: queryKeys.containers(selectedNodeId) }) : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
+      setLatestActionText("已发起一次 Docker 节点连通性检测。");
       await message.success("节点检测已完成");
     },
     onError: (error) => {
       void message.error(getErrorMessage(error));
     },
   });
+  const selectedNode = nodeDetailQuery.data ?? (nodesQuery.data ?? []).find((item) => item.id === selectedNodeId) ?? null;
+  const relatedTasks = useMemo(() => {
+    if (!selectedNode) {
+      return [];
+    }
+    return (tasksQuery.data ?? [])
+      .filter((task) => task.resourceId === selectedNode.id || task.target.includes(selectedNode.id) || task.target.includes(selectedNode.name))
+      .slice(0, 5);
+  }, [selectedNode, tasksQuery.data]);
+  const relatedAudits = useMemo(() => {
+    if (!selectedNode) {
+      return [];
+    }
+    return (auditsQuery.data ?? [])
+      .filter((audit) => {
+        const haystack = `${audit.resourceType} ${audit.resourceName} ${audit.summary}`.toLowerCase();
+        return haystack.includes(selectedNode.id.toLowerCase()) || haystack.includes(selectedNode.name.toLowerCase());
+      })
+      .slice(0, 5);
+  }, [auditsQuery.data, selectedNode]);
+  const primaryAction = selectedNode?.status === "OFFLINE" || selectedNode?.status === "UNKNOWN" ? "test" : "containers";
+  const containerCount = containersQuery.data?.length ?? selectedNode?.containerCount ?? 0;
 
   return (
     <PermissionGuard permission="docker.view" forbiddenPage>
@@ -92,52 +144,95 @@ export function DockerNodesPage() {
           }
         />
 
-        <Card className="page-card">
-          <DataTable
-            rowKey="id"
-            loading={nodesQuery.isLoading}
-            dataSource={nodesQuery.data}
-            columns={[
-              { title: "名称", dataIndex: "name" },
-              { title: "Endpoint", dataIndex: "endpoint" },
-              {
-                title: "TLS",
-                dataIndex: "tlsEnabled",
-                render: (value) => (value ? "已启用" : "未启用"),
-              },
-              {
-                title: "状态",
-                dataIndex: "status",
-                render: (value) => <StatusBadge status={value} />,
-              },
-              {
-                title: "容器数",
-                dataIndex: "containerCount",
-              },
-              {
-                title: "操作",
-                key: "actions",
-                width: 280,
-                render: (_, node) => (
+        <div className="resource-workbench">
+          <div className="resource-list-pane">
+            <Card className="page-card">
+              <DataTable
+                rowKey="id"
+                loading={nodesQuery.isLoading}
+                dataSource={nodesQuery.data}
+                rowClassName={(node) => (node.id === selectedNodeId ? "resource-row-selected" : "")}
+                onRow={(node) => ({
+                  onClick: () => {
+                    setSearchParams((previous) => {
+                      const next = new URLSearchParams(previous);
+                      next.set("selected", node.id);
+                      return next;
+                    });
+                    setLatestActionText(null);
+                  },
+                })}
+                columns={[
+                  { title: "名称", dataIndex: "name" },
+                  { title: "Endpoint", dataIndex: "endpoint" },
+                  {
+                    title: "TLS",
+                    dataIndex: "tlsEnabled",
+                    render: (value) => (value ? "已启用" : "未启用"),
+                  },
+                  {
+                    title: "状态",
+                    dataIndex: "status",
+                    render: (value) => <StatusBadge status={value} />,
+                  },
+                  {
+                    title: "容器数",
+                    dataIndex: "containerCount",
+                    render: (value) => value ?? 0,
+                  },
+                ]}
+              />
+            </Card>
+          </div>
+
+          <div className="resource-detail-pane">
+            <ResourceDetailPanel
+              title={selectedNode?.name}
+              subtitle={selectedNode?.endpoint}
+              status={selectedNode ? <StatusBadge status={selectedNode.status} /> : undefined}
+              meta={
+                selectedNode
+                  ? [
+                      {
+                        label: "认证方式",
+                        value: <Tag color={selectedNode.tlsEnabled ? "blue" : "default"}>{selectedNode.tlsEnabled ? "TLS" : "NONE"}</Tag>,
+                      },
+                      { label: "容器数", value: containerCount },
+                      { label: "最近检测", value: selectedNode.lastCheckedAt ? formatDateTime(selectedNode.lastCheckedAt) : "--" },
+                      { label: "说明", value: selectedNode.description || "--" },
+                    ]
+                  : []
+              }
+              actions={
+                selectedNode ? (
                   <Space wrap>
-                    <Button size="small" type="link" onClick={() => navigate(`/docker/nodes/${node.id}`)}>
-                      查看容器
-                    </Button>
                     <PermissionGuard permission="docker.manage">
-                      <Button size="small" onClick={() => testMutation.mutate(node.id)} loading={testMutation.isPending}>
+                      <Button
+                        type={primaryAction === "test" ? "primary" : "default"}
+                        loading={testMutation.isPending}
+                        onClick={() => {
+                          setLatestActionText("正在执行 Docker 节点连通性检测...");
+                          testMutation.mutate(selectedNode.id);
+                        }}
+                      >
                         测试连接
                       </Button>
                     </PermissionGuard>
+                    <Button
+                      type={primaryAction === "containers" ? "primary" : "default"}
+                      onClick={() => navigate(`/docker/nodes/${selectedNode.id}`)}
+                    >
+                      查看容器
+                    </Button>
                     <PermissionGuard permission="docker.manage">
                       <Button
-                        size="small"
                         onClick={() => {
-                          setEditingNode(node);
+                          setEditingNode(selectedNode);
                           form.setFieldsValue({
-                            name: node.name,
-                            endpoint: node.endpoint,
-                            tlsEnabled: node.tlsEnabled,
-                            description: node.description,
+                            name: selectedNode.name,
+                            endpoint: selectedNode.endpoint,
+                            tlsEnabled: selectedNode.tlsEnabled,
+                            description: selectedNode.description,
                           });
                           setDrawerOpen(true);
                         }}
@@ -146,11 +241,45 @@ export function DockerNodesPage() {
                       </Button>
                     </PermissionGuard>
                   </Space>
-                ),
-              },
-            ]}
-          />
-        </Card>
+                ) : undefined
+              }
+            >
+              {latestActionText ? (
+                <div className="resource-detail-section">
+                  <Typography.Text type="secondary">{latestActionText}</Typography.Text>
+                </div>
+              ) : null}
+
+              <ResourceActivityList
+                title="最近任务"
+                actionLabel={selectedNode ? "进入任务中心" : undefined}
+                onActionClick={selectedNode ? () => navigate("/tasks") : undefined}
+                items={relatedTasks.map((task) => ({
+                  key: task.id,
+                  title: task.type,
+                  description: task.summary ?? task.target,
+                  meta: `${task.initiatedBy} · ${formatDateTime(task.createdAt)}`,
+                  extra: <TaskStatus task={task} />,
+                }))}
+                emptyText="当前节点还没有关联任务。"
+              />
+
+              <ResourceActivityList
+                title="最近审计"
+                actionLabel={selectedNode ? "查看全部审计" : undefined}
+                onActionClick={selectedNode ? () => navigate("/audits") : undefined}
+                items={relatedAudits.map((audit) => ({
+                  key: audit.id,
+                  title: audit.action,
+                  description: audit.summary,
+                  meta: `${audit.actor} · ${formatDateTime(audit.createdAt)}`,
+                  extra: <StatusBadge status={audit.result} />,
+                }))}
+                emptyText="当前节点还没有关联审计记录。"
+              />
+            </ResourceDetailPanel>
+          </div>
+        </div>
 
         <FormDrawer
           open={drawerOpen}

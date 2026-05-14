@@ -38,6 +38,8 @@ export function DashboardPage() {
   }
 
   const data = summaryQuery.data;
+  const formatAuditDescription = (actor?: string, resourceName?: string, createdAt?: string) =>
+    [actor || "-", resourceName || "-", createdAt ? formatDateTime(createdAt) : "-"].join(" · ");
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -137,7 +139,7 @@ export function DashboardPage() {
                         <StatusBadge status={audit.result} />
                       </Space>
                     }
-                    description={`${audit.actor} · ${audit.resourceName} · ${formatDateTime(audit.createdAt)}`}
+                    description={formatAuditDescription(audit.actor, audit.resourceName, audit.createdAt)}
                   />
                 </List.Item>
               )}

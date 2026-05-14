@@ -100,6 +100,8 @@ export type Task = {
   type: string;
   status: TaskStatus;
   target: string;
+  resourceType?: string;
+  resourceId?: string;
   initiatedBy: string;
   progress: number;
   summary?: string;

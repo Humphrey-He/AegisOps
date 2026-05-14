@@ -6,6 +6,7 @@ export const queryKeys = {
   roles: ["roles"] as const,
   secrets: (keyword: string) => ["secrets", keyword] as const,
   hosts: (keyword: string) => ["hosts", keyword] as const,
+  host: (hostId: string) => ["host", hostId] as const,
   dockerNodes: ["dockerNodes"] as const,
   dockerNode: (nodeId: string) => ["dockerNode", nodeId] as const,
   containers: (nodeId: string) => ["containers", nodeId] as const,

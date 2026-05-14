@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 
 import { AppShell } from "../layouts/AppShell";
 import { LoginPage } from "../pages/auth/LoginPage";
+import { DashboardPage } from "../pages/dashboard/DashboardPage";
 import { HostsPage } from "../pages/assets/HostsPage";
 import { SecretsPage } from "../pages/secrets/SecretsPage";
 import { DockerNodesPage } from "../pages/docker/DockerNodesPage";
@@ -48,11 +49,15 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/system/users" replace />,
+        element: <Navigate to="/dashboard" replace />,
       },
       {
         path: "dashboard",
-        element: <Navigate to="/system/users" replace />,
+        element: (
+          <RequirePermission permission="dashboard.view">
+            <DashboardPage />
+          </RequirePermission>
+        ),
         handle: { title: "工作台" },
       },
       {

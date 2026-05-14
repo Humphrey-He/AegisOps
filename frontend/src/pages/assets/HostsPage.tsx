@@ -7,11 +7,12 @@ import {
   Select,
   Space,
   Tag,
+  Typography,
 } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { hostsApi, secretsApi } from "../../lib/api";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { auditsApi, hostsApi, secretsApi, tasksApi } from "../../lib/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
@@ -21,6 +22,10 @@ import { FormDrawer } from "../../components/FormDrawer";
 import { PageHeader } from "../../components/PageHeader";
 import { PermissionGuard } from "../../components/PermissionGuard";
 import { StatusBadge } from "../../components/StatusBadge";
+import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
+import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
+import { formatDateTime } from "../../lib/format";
+import { TaskStatus } from "../../components/TaskStatus";
 import type { Host, HostInput } from "../../types/models";
 
 type HostFormValues = {
@@ -38,8 +43,11 @@ export function HostsPage() {
   const [keyword, setKeyword] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<Host | null>(null);
+  const [latestActionText, setLatestActionText] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const selectedHostId = searchParams.get("selected") ?? "";
 
   const hostsQuery = useQuery({
     queryKey: queryKeys.hosts(keyword),
@@ -48,6 +56,19 @@ export function HostsPage() {
   const secretsQuery = useQuery({
     queryKey: queryKeys.secrets(""),
     queryFn: () => secretsApi.list(""),
+  });
+  const tasksQuery = useQuery({
+    queryKey: queryKeys.tasks,
+    queryFn: tasksApi.list,
+  });
+  const auditsQuery = useQuery({
+    queryKey: queryKeys.audits,
+    queryFn: auditsApi.list,
+  });
+  const hostDetailQuery = useQuery({
+    queryKey: queryKeys.host(selectedHostId),
+    queryFn: () => hostsApi.detail(selectedHostId),
+    enabled: Boolean(selectedHostId),
   });
 
   const saveMutation = useMutation({
@@ -70,8 +91,10 @@ export function HostsPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["hosts"] }),
+        selectedHostId ? queryClient.invalidateQueries({ queryKey: queryKeys.host(selectedHostId) }) : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
+      setLatestActionText("已发起一次 SSH 连通性检测。");
       await message.success("SSH 测试已完成");
     },
     onError: (error) => {
@@ -87,6 +110,33 @@ export function HostsPage() {
       })),
     [secretsQuery.data],
   );
+  const selectedHost = hostDetailQuery.data ?? (hostsQuery.data ?? []).find((item) => item.id === selectedHostId) ?? null;
+  const selectedSecretName = useMemo(() => {
+    if (!selectedHost) {
+      return "--";
+    }
+    return (secretsQuery.data ?? []).find((item) => item.id === selectedHost.secretId)?.name ?? selectedHost.secretId;
+  }, [secretsQuery.data, selectedHost]);
+  const relatedTasks = useMemo(() => {
+    if (!selectedHost) {
+      return [];
+    }
+    return (tasksQuery.data ?? [])
+      .filter((task) => task.resourceId === selectedHost.id || task.target.includes(selectedHost.id) || task.target.includes(selectedHost.name))
+      .slice(0, 5);
+  }, [selectedHost, tasksQuery.data]);
+  const relatedAudits = useMemo(() => {
+    if (!selectedHost) {
+      return [];
+    }
+    return (auditsQuery.data ?? [])
+      .filter((audit) => {
+        const haystack = `${audit.resourceType} ${audit.resourceName} ${audit.summary}`.toLowerCase();
+        return haystack.includes(selectedHost.id.toLowerCase()) || haystack.includes(selectedHost.name.toLowerCase());
+      })
+      .slice(0, 5);
+  }, [auditsQuery.data, selectedHost]);
+  const primaryAction = selectedHost?.status === "HEALTHY" ? "terminal" : "test";
 
   if (hostsQuery.isError) {
     return <ErrorState message={hostsQuery.error.message} onRetry={() => void hostsQuery.refetch()} />;
@@ -122,81 +172,132 @@ export function HostsPage() {
                 allowClear
                 placeholder="搜索主机名、地址或标签"
                 style={{ width: 320 }}
-                onSearch={setKeyword}
+                onSearch={(value) => {
+                  setKeyword(value);
+                  setLatestActionText(null);
+                }}
               />
             </div>
           </div>
         </Card>
 
-        <Card className="page-card">
-          <DataTable
-            rowKey="id"
-            loading={hostsQuery.isLoading}
-            dataSource={hostsQuery.data}
-            locale={{
-              emptyText: (
-                <EmptyState
-                  title="还没有主机资产"
-                  description="先绑定 SSH 凭证，再把主机接入控制台。"
-                  action={
-                    <Button type="primary" onClick={() => setDrawerOpen(true)}>
-                      新增第一台主机
-                    </Button>
-                  }
-                />
-              ),
-            }}
-            columns={[
-              {
-                title: "主机",
-                dataIndex: "name",
-                render: (_, host) => (
-                  <Space direction="vertical" size={2}>
-                    <span>{host.name}</span>
-                    <span style={{ color: "#64748b" }}>
-                      {host.address}:{host.port}
-                    </span>
-                  </Space>
-                ),
-              },
-              {
-                title: "状态",
-                dataIndex: "status",
-                render: (value) => <StatusBadge status={value} />,
-              },
-              {
-                title: "标签",
-                dataIndex: "tags",
-                render: (tags: string[]) => (
-                  <Space wrap>
-                    {tags.map((tag) => (
-                      <Tag key={tag}>{tag}</Tag>
-                    ))}
-                  </Space>
-                ),
-              },
-              {
-                title: "最近检测",
-                dataIndex: "lastCheckedAt",
-                render: (value) => value ?? "--",
-              },
-              {
-                title: "操作",
-                key: "actions",
-                width: 280,
-                render: (_, host) => (
+        <div className="resource-workbench">
+          <div className="resource-list-pane">
+            <Card className="page-card">
+              <DataTable
+                rowKey="id"
+                loading={hostsQuery.isLoading}
+                dataSource={hostsQuery.data}
+                rowClassName={(host) => (host.id === selectedHostId ? "resource-row-selected" : "")}
+                onRow={(host) => ({
+                  onClick: () => {
+                    setSearchParams((previous) => {
+                      const next = new URLSearchParams(previous);
+                      next.set("selected", host.id);
+                      return next;
+                    });
+                    setLatestActionText(null);
+                  },
+                })}
+                locale={{
+                  emptyText: (
+                    <EmptyState
+                      title="还没有主机资产"
+                      description="先绑定 SSH 凭证，再把主机接入控制台。"
+                      action={
+                        <Button type="primary" onClick={() => setDrawerOpen(true)}>
+                          新增第一台主机
+                        </Button>
+                      }
+                    />
+                  ),
+                }}
+                columns={[
+                  {
+                    title: "主机",
+                    dataIndex: "name",
+                    render: (_, host) => (
+                      <Space direction="vertical" size={2}>
+                        <span>{host.name}</span>
+                        <span style={{ color: "#64748b" }}>
+                          {host.address}:{host.port}
+                        </span>
+                      </Space>
+                    ),
+                  },
+                  {
+                    title: "状态",
+                    dataIndex: "status",
+                    render: (value) => <StatusBadge status={value} />,
+                  },
+                  {
+                    title: "标签",
+                    dataIndex: "tags",
+                    render: (tags: string[]) => (
+                      <Space wrap>
+                        {tags.map((tag) => (
+                          <Tag key={tag}>{tag}</Tag>
+                        ))}
+                      </Space>
+                    ),
+                  },
+                  {
+                    title: "最近检测",
+                    dataIndex: "lastCheckedAt",
+                    render: (value) => (value ? formatDateTime(value) : "--"),
+                  },
+                ]}
+              />
+            </Card>
+          </div>
+
+          <div className="resource-detail-pane">
+            <ResourceDetailPanel
+              title={selectedHost?.name}
+              subtitle={selectedHost ? `${selectedHost.address}:${selectedHost.port}` : undefined}
+              status={selectedHost ? <StatusBadge status={selectedHost.status} /> : undefined}
+              meta={
+                selectedHost
+                  ? [
+                      { label: "绑定凭证", value: selectedSecretName },
+                      { label: "最近检测", value: selectedHost.lastCheckedAt ? formatDateTime(selectedHost.lastCheckedAt) : "--" },
+                      {
+                        label: "标签",
+                        value: selectedHost.tags.length ? (
+                          <Space wrap>
+                            {selectedHost.tags.map((tag) => (
+                              <Tag key={tag}>{tag}</Tag>
+                            ))}
+                          </Space>
+                        ) : (
+                          "--"
+                        ),
+                      },
+                      { label: "说明", value: selectedHost.description || "--" },
+                    ]
+                  : []
+              }
+              actions={
+                selectedHost ? (
                   <Space wrap>
                     <PermissionGuard permission="hosts.manage">
-                      <Button size="small" onClick={() => testMutation.mutate(host.id)} loading={testMutation.isPending}>
+                      <Button
+                        type={primaryAction === "test" ? "primary" : "default"}
+                        loading={testMutation.isPending}
+                        onClick={() => {
+                          setLatestActionText("正在执行 SSH 连通性检测...");
+                          testMutation.mutate(selectedHost.id);
+                        }}
+                      >
                         SSH 测试
                       </Button>
                     </PermissionGuard>
                     <PermissionGuard permission="terminal.open">
                       <Button
-                        size="small"
-                        type="primary"
+                        type={primaryAction === "terminal" ? "primary" : "default"}
                         onClick={async () => {
-                          const session = await hostsToTerminal(host.id);
+                          setLatestActionText("正在创建终端会话...");
+                          const session = await hostsToTerminal(selectedHost.id);
                           navigate(`/terminal/${session}`);
                         }}
                       >
@@ -205,10 +306,9 @@ export function HostsPage() {
                     </PermissionGuard>
                     <PermissionGuard permission="hosts.manage">
                       <Button
-                        size="small"
                         onClick={() => {
-                          setEditingHost(host);
-                          form.setFieldsValue(host);
+                          setEditingHost(selectedHost);
+                          form.setFieldsValue(selectedHost);
                           setDrawerOpen(true);
                         }}
                       >
@@ -216,11 +316,45 @@ export function HostsPage() {
                       </Button>
                     </PermissionGuard>
                   </Space>
-                ),
-              },
-            ]}
-          />
-        </Card>
+                ) : undefined
+              }
+            >
+              {latestActionText ? (
+                <div className="resource-detail-section">
+                  <Typography.Text type="secondary">{latestActionText}</Typography.Text>
+                </div>
+              ) : null}
+
+              <ResourceActivityList
+                title="最近任务"
+                actionLabel={selectedHost ? "进入任务中心" : undefined}
+                onActionClick={selectedHost ? () => navigate("/tasks") : undefined}
+                items={relatedTasks.map((task) => ({
+                  key: task.id,
+                  title: task.type,
+                  description: task.summary ?? task.target,
+                  meta: `${task.initiatedBy} · ${formatDateTime(task.createdAt)}`,
+                  extra: <TaskStatus task={task} />,
+                }))}
+                emptyText="当前资源还没有关联任务。"
+              />
+
+              <ResourceActivityList
+                title="最近审计"
+                actionLabel={selectedHost ? "查看全部审计" : undefined}
+                onActionClick={selectedHost ? () => navigate("/audits") : undefined}
+                items={relatedAudits.map((audit) => ({
+                  key: audit.id,
+                  title: audit.action,
+                  description: audit.summary,
+                  meta: `${audit.actor} · ${formatDateTime(audit.createdAt)}`,
+                  extra: <StatusBadge status={audit.result} />,
+                }))}
+                emptyText="当前资源还没有关联审计记录。"
+              />
+            </ResourceDetailPanel>
+          </div>
+        </div>
 
         <FormDrawer
           open={drawerOpen}

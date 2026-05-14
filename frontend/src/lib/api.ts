@@ -158,6 +158,16 @@ type BackendAuditLog = {
   createdAt: string;
 };
 
+type BackendDashboardSummary = {
+  userCount: number;
+  hostCount: number;
+  dockerNodeCount: number;
+  containerCount: number;
+  unhealthyResourceCount: number;
+  recentTasks: BackendTask[];
+  recentAudits: BackendAuditLog[];
+};
+
 function normalizeUserStatus(status: BackendUser["status"]): User["status"] {
   return status === "disabled" || status === "DISABLED" ? "DISABLED" : "ACTIVE";
 }
@@ -234,6 +244,8 @@ function mapBackendTask(task: BackendTask): Task {
     type: task.type,
     status: task.status,
     target: [task.targetType, task.targetId].filter(Boolean).join(":") || task.title,
+    resourceType: task.targetType,
+    resourceId: task.targetId,
     initiatedBy: task.createdBy || "-",
     progress: progressFromStatus(task.status),
     summary: task.error || task.result || task.title,
@@ -342,6 +354,18 @@ function mapBackendAudit(audit: BackendAuditLog): AuditLog {
   };
 }
 
+function mapBackendDashboardSummary(summary: BackendDashboardSummary): DashboardSummary {
+  return {
+    userCount: summary.userCount ?? 0,
+    hostCount: summary.hostCount ?? 0,
+    dockerNodeCount: summary.dockerNodeCount ?? 0,
+    containerCount: summary.containerCount ?? 0,
+    unhealthyResourceCount: summary.unhealthyResourceCount ?? 0,
+    recentTasks: (summary.recentTasks ?? []).map(mapBackendTask),
+    recentAudits: (summary.recentAudits ?? []).map(mapBackendAudit),
+  };
+}
+
 export const authApi = {
   getSetupStatus: async (): Promise<SetupStatus> => {
     if (USE_MOCK) {
@@ -377,7 +401,11 @@ export const authApi = {
 
 export const dashboardApi = {
   summary: async (): Promise<DashboardSummary> => {
-    return USE_MOCK ? mockService.dashboardSummary(token()) : http.get<DashboardSummary>("/dashboard/summary");
+    if (USE_MOCK) {
+      return mockService.dashboardSummary(token());
+    }
+    const summary = await http.get<BackendDashboardSummary>("/dashboard/summary");
+    return mapBackendDashboardSummary(summary);
   },
 };
 
@@ -465,6 +493,18 @@ export const hostsApi = {
     }
     const page = await http.get<BackendPage<BackendHost>>(`/hosts?keyword=${encodeURIComponent(keyword)}`);
     return pageItems(page).map(mapBackendHost);
+  },
+  detail: async (hostId: string): Promise<Host> => {
+    if (USE_MOCK) {
+      const hosts = await mockService.listHosts(token(), "");
+      const host = hosts.find((item) => item.id === hostId);
+      if (!host) {
+        throw new Error("主机不存在。");
+      }
+      return host;
+    }
+    const host = await http.get<BackendHost>(`/hosts/${hostId}`);
+    return mapBackendHost(host);
   },
   save: async (payload: HostInput): Promise<Host> => {
     if (USE_MOCK) {
