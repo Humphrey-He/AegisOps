@@ -1,0 +1,125 @@
+:root {
+  font-family:
+    Inter,
+    "PingFang SC",
+    "Microsoft YaHei",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f172a;
+  background: #f4f7f6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 1280px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.fullscreen-center {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page-card {
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-toolbar-start,
+.page-toolbar-end {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.terminal-surface {
+  min-height: 560px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr;
+  gap: 16px;
+}
+
+.two-col-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.log-viewer {
+  height: 360px;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #020617;
+  color: #dbeafe;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-line--error {
+  color: #fca5a5;
+}
+
+.log-line--warn {
+  color: #fde68a;
+}
+
+.stat-help {
+  color: #64748b;
+  font-size: 12px;
+}

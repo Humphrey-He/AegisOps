@@ -1,0 +1,17 @@
+export const queryKeys = {
+  setup: ["setup"] as const,
+  me: ["me"] as const,
+  dashboard: ["dashboard"] as const,
+  users: (keyword: string) => ["users", keyword] as const,
+  roles: ["roles"] as const,
+  secrets: (keyword: string) => ["secrets", keyword] as const,
+  hosts: (keyword: string) => ["hosts", keyword] as const,
+  dockerNodes: ["dockerNodes"] as const,
+  dockerNode: (nodeId: string) => ["dockerNode", nodeId] as const,
+  containers: (nodeId: string) => ["containers", nodeId] as const,
+  containerLogs: (containerId: string) => ["containerLogs", containerId] as const,
+  tasks: ["tasks"] as const,
+  task: (taskId: string) => ["task", taskId] as const,
+  audits: ["audits"] as const,
+  terminal: (sessionId: string) => ["terminal", sessionId] as const,
+};
