@@ -28,6 +28,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
+	r.Use(middleware.CORS())
 	r.Use(middleware.Logger(log))
 
 	r.GET("/healthz", func(c *gin.Context) {
