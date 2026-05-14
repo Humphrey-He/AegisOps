@@ -79,6 +79,40 @@ type BackendLoginResult = {
   tokens: BackendTokenPair;
 };
 
+type BackendTaskStep = {
+  id: string;
+  name: string;
+  status: Task["status"];
+  result?: string;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+type BackendTaskLog = {
+  id: string;
+  level: "INFO" | "WARN" | "ERROR";
+  message: string;
+  createdAt: string;
+};
+
+type BackendTask = {
+  id: string;
+  type: string;
+  title: string;
+  status: Task["status"];
+  targetType?: string;
+  targetId?: string;
+  result?: string;
+  error?: string;
+  createdBy?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  steps?: BackendTaskStep[];
+  logs?: BackendTaskLog[];
+};
+
 function normalizeUserStatus(status: BackendUser["status"]): User["status"] {
   return status === "disabled" || status === "DISABLED" ? "DISABLED" : "ACTIVE";
 }
@@ -132,6 +166,49 @@ function mapCurrentUser(user: BackendUser): CurrentUserPayload {
   return {
     user: mapBackendUser(user),
     permissions: permissionsFromUser(user),
+  };
+}
+
+function progressFromStatus(status: Task["status"]): number {
+  switch (status) {
+    case "SUCCESS":
+      return 100;
+    case "FAILED":
+    case "CANCELED":
+      return 100;
+    case "RUNNING":
+      return 50;
+    default:
+      return 0;
+  }
+}
+
+function mapBackendTask(task: BackendTask): Task {
+  return {
+    id: task.id,
+    type: task.type,
+    status: task.status,
+    target: [task.targetType, task.targetId].filter(Boolean).join(":") || task.title,
+    initiatedBy: task.createdBy || "-",
+    progress: progressFromStatus(task.status),
+    summary: task.error || task.result || task.title,
+    createdAt: task.createdAt,
+    startedAt: task.startedAt,
+    finishedAt: task.finishedAt,
+    steps: (task.steps ?? []).map((step) => ({
+      id: step.id,
+      title: step.name,
+      status: step.status,
+      detail: step.error || step.result,
+      startedAt: step.startedAt,
+      finishedAt: step.finishedAt,
+    })),
+    logs: (task.logs ?? []).map((log) => ({
+      id: log.id,
+      timestamp: log.createdAt,
+      level: log.level,
+      message: log.message,
+    })),
   };
 }
 
@@ -305,10 +382,18 @@ export const dockerApi = {
 
 export const tasksApi = {
   list: async (): Promise<Task[]> => {
-    return USE_MOCK ? mockService.listTasks(token()) : http.get<Task[]>("/tasks");
+    if (USE_MOCK) {
+      return mockService.listTasks(token());
+    }
+    const page = await http.get<BackendPage<BackendTask>>("/tasks");
+    return pageItems(page).map(mapBackendTask);
   },
   detail: async (taskId: string): Promise<Task> => {
-    return USE_MOCK ? mockService.getTask(token(), taskId) : http.get<Task>(`/tasks/${taskId}`);
+    if (USE_MOCK) {
+      return mockService.getTask(token(), taskId);
+    }
+    const task = await http.get<BackendTask>(`/tasks/${taskId}`);
+    return mapBackendTask(task);
   },
 };
 
