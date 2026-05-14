@@ -62,7 +62,7 @@ export function SecretsPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
           title="凭证"
-          description="一期只把 SSH 凭证打磨扎实，Docker Token 类型先保留结构。"
+          description="当前凭证同时服务一期主机接入与二期 Registry 认证，Basic 模式可用 username:password 形式保存。"
           extra={
             <PermissionGuard permission="secrets.manage">
               <Button
@@ -173,6 +173,7 @@ export function SecretsPage() {
                 options={[
                   { label: "SSH 私钥", value: "SSH_PRIVATE_KEY" },
                   { label: "SSH 密码", value: "SSH_PASSWORD" },
+                  { label: "Docker TLS", value: "DOCKER_TLS" },
                   { label: "Docker Token", value: "DOCKER_TOKEN" },
                 ]}
               />

@@ -16,6 +16,11 @@ import type {
   LoginInput,
   Role,
   RoleInput,
+  Registry,
+  RegistryInput,
+  RegistryManifestResult,
+  RegistryRepositoriesResult,
+  RegistryTagsResult,
   Secret,
   SecretInputPayload,
   SetupStatus,
@@ -156,6 +161,38 @@ type BackendAuditLog = {
   message?: string;
   traceId?: string;
   createdAt: string;
+};
+
+type BackendRegistry = {
+  id: string;
+  name: string;
+  url: string;
+  authType: Registry["authType"];
+  secretId: string;
+  description?: string;
+  status: Registry["status"];
+  lastTestAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackendRegistryRepositoriesResult = {
+  repositories?: string[];
+};
+
+type BackendRegistryTagsResult = {
+  name: string;
+  tags?: string[];
+};
+
+type BackendRegistryManifestResult = {
+  repository: string;
+  reference: string;
+  digest?: string;
+  contentType?: string;
+  manifest?: unknown;
 };
 
 type BackendDashboardSummary = {
@@ -337,6 +374,23 @@ function mapBackendDockerNode(node: BackendDockerNode): DockerNode {
     description: node.description,
     lastCheckedAt: node.lastTestAt,
     containerCount: 0,
+  };
+}
+
+function mapBackendRegistry(registry: BackendRegistry): Registry {
+  return {
+    id: registry.id,
+    name: registry.name,
+    url: registry.url,
+    authType: registry.authType,
+    secretId: registry.secretId,
+    description: registry.description,
+    status: registry.status,
+    lastTestAt: registry.lastTestAt,
+    createdBy: registry.createdBy,
+    updatedBy: registry.updatedBy,
+    createdAt: registry.createdAt,
+    updatedAt: registry.updatedAt,
   };
 }
 
@@ -526,6 +580,85 @@ export const hostsApi = {
   },
   testSsh: async (hostId: string): Promise<{ connected: boolean }> => {
     return USE_MOCK ? mockService.testHostSsh(token(), hostId).then(() => ({ connected: true })) : http.post<{ connected: boolean }>(`/hosts/${hostId}/test-ssh`);
+  },
+};
+
+export const registriesApi = {
+  list: async (keyword = ""): Promise<Registry[]> => {
+    if (USE_MOCK) {
+      return mockService.listRegistries(token(), keyword);
+    }
+    const page = await http.get<BackendPage<BackendRegistry>>(`/registries?keyword=${encodeURIComponent(keyword)}`);
+    return pageItems(page).map(mapBackendRegistry);
+  },
+  detail: async (registryId: string): Promise<Registry> => {
+    if (USE_MOCK) {
+      return mockService.getRegistry(token(), registryId);
+    }
+    const registry = await http.get<BackendRegistry>(`/registries/${registryId}`);
+    return mapBackendRegistry(registry);
+  },
+  save: async (payload: RegistryInput): Promise<Registry> => {
+    if (USE_MOCK) {
+      return mockService.saveRegistry(token(), payload);
+    }
+    const backendPayload = {
+      name: payload.name,
+      url: payload.url,
+      authType: payload.authType,
+      secretId: payload.secretId ?? "",
+      description: payload.description ?? "",
+    };
+    const registry = payload.id
+      ? await http.patch<BackendRegistry>(`/registries/${payload.id}`, backendPayload)
+      : await http.post<BackendRegistry>("/registries", backendPayload);
+    return mapBackendRegistry(registry);
+  },
+  remove: async (registryId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      return mockService.deleteRegistry(token(), registryId);
+    }
+    return http.delete<{ deleted: boolean }>(`/registries/${registryId}`);
+  },
+  test: async (registryId: string): Promise<{ connected: boolean }> => {
+    if (USE_MOCK) {
+      return mockService.testRegistry(token(), registryId);
+    }
+    return http.post<{ connected: boolean }>(`/registries/${registryId}/test`);
+  },
+  repositories: async (registryId: string): Promise<RegistryRepositoriesResult> => {
+    if (USE_MOCK) {
+      return mockService.listRegistryRepositories(token(), registryId);
+    }
+    const result = await http.get<BackendRegistryRepositoriesResult>(`/registries/${registryId}/repositories`);
+    return { repositories: result.repositories ?? [] };
+  },
+  tags: async (registryId: string, repository: string): Promise<RegistryTagsResult> => {
+    if (USE_MOCK) {
+      return mockService.listRegistryTags(token(), registryId, repository);
+    }
+    const result = await http.get<BackendRegistryTagsResult>(
+      `/registries/${registryId}/repositories/${encodeURIComponent(repository)}/tags`,
+    );
+    return {
+      name: result.name,
+      tags: result.tags ?? [],
+    };
+  },
+  manifest: async (registryId: string, repository: string, reference: string): Promise<RegistryManifestResult> => {
+    if (USE_MOCK) {
+      return mockService.getRegistryManifest(token(), registryId, repository, reference);
+    }
+    const result = await http.get<BackendRegistryManifestResult>(
+      `/registries/${registryId}/repositories/${encodeURIComponent(repository)}/manifests/${encodeURIComponent(reference)}`,
+    );
+    return {
+      repository: result.repository,
+      reference: result.reference,
+      digest: result.digest ?? "",
+      contentType: result.contentType ?? "",
+      manifest: result.manifest ?? {},
+    };
   },
 };
 

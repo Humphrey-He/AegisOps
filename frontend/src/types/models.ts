@@ -1,9 +1,11 @@
 export type UserStatus = "ACTIVE" | "DISABLED";
 export type HostStatus = "HEALTHY" | "UNREACHABLE" | "UNKNOWN" | "TESTING";
 export type DockerNodeStatus = "ONLINE" | "OFFLINE" | "UNKNOWN" | "TESTING";
+export type RegistryAuthType = "NONE" | "BASIC" | "TOKEN";
+export type RegistryStatus = "ONLINE" | "OFFLINE" | "UNKNOWN";
 export type TaskStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELED";
 export type TaskLogLevel = "INFO" | "WARN" | "ERROR";
-export type SecretType = "SSH_PASSWORD" | "SSH_PRIVATE_KEY" | "DOCKER_TOKEN";
+export type SecretType = "SSH_PASSWORD" | "SSH_PRIVATE_KEY" | "DOCKER_TLS" | "DOCKER_TOKEN";
 export type AuditResult = "SUCCESS" | "FAILED";
 export type TerminalSessionStatus = "CONNECTED" | "DISCONNECTED";
 
@@ -66,6 +68,38 @@ export type DockerNode = {
   description?: string;
   lastCheckedAt?: string;
   containerCount: number;
+};
+
+export type Registry = {
+  id: string;
+  name: string;
+  url: string;
+  authType: RegistryAuthType;
+  secretId: string;
+  description?: string;
+  status: RegistryStatus;
+  lastTestAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RegistryRepositoriesResult = {
+  repositories: string[];
+};
+
+export type RegistryTagsResult = {
+  name: string;
+  tags: string[];
+};
+
+export type RegistryManifestResult = {
+  repository: string;
+  reference: string;
+  digest: string;
+  contentType: string;
+  manifest: unknown;
 };
 
 export type ContainerItem = {
@@ -216,5 +250,14 @@ export type DockerNodeInput = {
   name: string;
   endpoint: string;
   tlsEnabled: boolean;
+  description?: string;
+};
+
+export type RegistryInput = {
+  id?: string;
+  name: string;
+  url: string;
+  authType: RegistryAuthType;
+  secretId?: string;
   description?: string;
 };

@@ -6,6 +6,8 @@ export const permissionCatalog: PermissionDefinition[] = [
   { key: "hosts.manage", label: "管理主机", description: "创建与编辑主机", group: "资产管理" },
   { key: "secrets.view", label: "查看凭证", description: "查看凭证列表", group: "资产管理" },
   { key: "secrets.manage", label: "管理凭证", description: "新增与编辑凭证", group: "资产管理" },
+  { key: "registries.view", label: "查看镜像仓库", description: "查看 Registry 列表与仓库内容", group: "交付发布" },
+  { key: "registries.manage", label: "管理镜像仓库", description: "创建、编辑、测试与删除 Registry", group: "交付发布" },
   { key: "terminal.open", label: "打开终端", description: "创建 WebSSH 会话", group: "运维执行" },
   { key: "docker.view", label: "查看 Docker", description: "查看节点与容器", group: "运维执行" },
   { key: "docker.manage", label: "管理 Docker", description: "执行容器启停操作", group: "运维执行" },

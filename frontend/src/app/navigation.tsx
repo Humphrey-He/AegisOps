@@ -3,6 +3,7 @@ import {
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DesktopOutlined,
+  InboxOutlined,
   TeamOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
@@ -53,6 +54,18 @@ export const navItems: NavItem[] = [
     ],
   },
   {
+    key: "delivery",
+    label: "交付发布",
+    icon: <InboxOutlined />,
+    children: [
+      {
+        key: "/delivery/registries",
+        label: "Registry",
+        permission: "registries.view",
+      },
+    ],
+  },
+  {
     key: "/tasks",
     label: "任务中心",
     icon: <UnorderedListOutlined />,
@@ -87,6 +100,7 @@ export const hiddenNavTitles: Record<string, string> = {
   "/setup/admin": "初始化管理员",
   "/login": "登录",
   "/terminal": "终端",
+  "/delivery/registries": "Registry",
   "/403": "无权限",
   "/404": "页面不存在",
 };

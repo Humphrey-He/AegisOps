@@ -177,6 +177,25 @@ a {
   padding: 12px 0;
 }
 
+.resource-subpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 0;
+}
+
+.registry-browser-grid {
+  align-items: start;
+}
+
+.registry-browser-card {
+  min-width: 0;
+}
+
 .terminal-surface {
   min-height: 560px;
   padding: 12px;

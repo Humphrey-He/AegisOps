@@ -2,9 +2,11 @@ import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 
 import { AppShell } from "../layouts/AppShell";
 import { LoginPage } from "../pages/auth/LoginPage";
+import { SetupAdminPage } from "../pages/auth/SetupAdminPage";
 import { DashboardPage } from "../pages/dashboard/DashboardPage";
 import { HostsPage } from "../pages/assets/HostsPage";
 import { SecretsPage } from "../pages/secrets/SecretsPage";
+import { RegistriesPage } from "../pages/registries/RegistriesPage";
 import { DockerNodesPage } from "../pages/docker/DockerNodesPage";
 import { DockerNodeDetailPage } from "../pages/docker/DockerNodeDetailPage";
 import { TasksPage } from "../pages/tasks/TasksPage";
@@ -38,6 +40,11 @@ function RequirePermission({ permission, children }: { permission: string; child
 }
 
 export const router = createBrowserRouter([
+  {
+    path: "/setup/admin",
+    element: <SetupAdminPage />,
+    handle: { title: "初始化管理员" },
+  },
   {
     path: "/login",
     element: <LoginPage />,
@@ -77,6 +84,15 @@ export const router = createBrowserRouter([
           </RequirePermission>
         ),
         handle: { title: "凭证" },
+      },
+      {
+        path: "delivery/registries",
+        element: (
+          <RequirePermission permission="registries.view">
+            <RegistriesPage />
+          </RequirePermission>
+        ),
+        handle: { title: "Registry" },
       },
       {
         path: "docker/nodes",

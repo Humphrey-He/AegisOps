@@ -7,6 +7,12 @@ export const queryKeys = {
   secrets: (keyword: string) => ["secrets", keyword] as const,
   hosts: (keyword: string) => ["hosts", keyword] as const,
   host: (hostId: string) => ["host", hostId] as const,
+  registries: (keyword: string) => ["registries", keyword] as const,
+  registry: (registryId: string) => ["registry", registryId] as const,
+  registryRepositories: (registryId: string) => ["registryRepositories", registryId] as const,
+  registryTags: (registryId: string, repository: string) => ["registryTags", registryId, repository] as const,
+  registryManifest: (registryId: string, repository: string, reference: string) =>
+    ["registryManifest", registryId, repository, reference] as const,
   dockerNodes: ["dockerNodes"] as const,
   dockerNode: (nodeId: string) => ["dockerNode", nodeId] as const,
   containers: (nodeId: string) => ["containers", nodeId] as const,

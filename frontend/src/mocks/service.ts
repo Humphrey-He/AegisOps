@@ -12,6 +12,11 @@ import type {
   LoginInput,
   Role,
   RoleInput,
+  Registry,
+  RegistryInput,
+  RegistryManifestResult,
+  RegistryRepositoriesResult,
+  RegistryTagsResult,
   Secret,
   SecretInputPayload,
   Task,
@@ -33,11 +38,25 @@ type StoredSecret = Secret & {
   secretValue: string;
 };
 
+type StoredRegistryManifest = {
+  digest: string;
+  contentType: string;
+  manifest: unknown;
+};
+
+type StoredRegistryCatalog = {
+  repositories: string[];
+  tags: Record<string, string[]>;
+  manifests: Record<string, Record<string, StoredRegistryManifest>>;
+};
+
 type MockDb = {
   users: StoredUser[];
   roles: Role[];
   secrets: StoredSecret[];
   hosts: Host[];
+  registries: Registry[];
+  registryCatalogs: Record<string, StoredRegistryCatalog>;
   dockerNodes: DockerNode[];
   containers: ContainerItem[];
   tasks: Task[];
@@ -72,12 +91,49 @@ function createStoredDb(): MockDb {
     roles: createDefaultRoles(),
     secrets: [],
     hosts: [],
+    registries: [],
+    registryCatalogs: {},
     dockerNodes: [],
     containers: [],
     tasks: [],
     audits: [],
     terminalSessions: [],
   };
+}
+
+function migrateDb(rawDb: Partial<MockDb>): MockDb {
+  const db: MockDb = {
+    users: rawDb.users ?? [],
+    roles: rawDb.roles ?? createDefaultRoles(),
+    secrets: (rawDb.secrets ?? []).map((secret) => ({
+      ...secret,
+      usedBy: secret.usedBy ?? [],
+    })),
+    hosts: rawDb.hosts ?? [],
+    registries: rawDb.registries ?? [],
+    registryCatalogs: rawDb.registryCatalogs ?? {},
+    dockerNodes: rawDb.dockerNodes ?? [],
+    containers: rawDb.containers ?? [],
+    tasks: rawDb.tasks ?? [],
+    audits: rawDb.audits ?? [],
+    terminalSessions: rawDb.terminalSessions ?? [],
+  };
+
+  const allPermissions = permissionCatalog.map((item) => item.key);
+  db.roles = db.roles.map((role) => {
+    if (role.id === "role-admin") {
+      return { ...role, permissions: allPermissions };
+    }
+    if (role.id === "role-ops") {
+      return {
+        ...role,
+        permissions: Array.from(new Set([...role.permissions, "registries.view", "registries.manage"])),
+      };
+    }
+    return role;
+  });
+
+  return db;
 }
 
 function readDb(): MockDb {
@@ -89,7 +145,9 @@ function readDb(): MockDb {
   }
 
   try {
-    return JSON.parse(raw) as MockDb;
+    const migrated = migrateDb(JSON.parse(raw) as Partial<MockDb>);
+    writeDb(migrated);
+    return migrated;
   } catch {
     const reset = createStoredDb();
     writeDb(reset);
@@ -121,6 +179,8 @@ function createDefaultRoles(): Role[] {
         "hosts.view",
         "hosts.manage",
         "secrets.view",
+        "registries.view",
+        "registries.manage",
         "terminal.open",
         "docker.view",
         "docker.manage",
@@ -315,6 +375,131 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     lastCheckedAt: now(),
   });
 
+  const registrySecretId = crypto.randomUUID();
+  db.secrets.push({
+    id: registrySecretId,
+    name: "harbor-basic-auth",
+    type: "DOCKER_TOKEN",
+    username: "release-bot",
+    description: "二期 Registry 演示凭证，mock 环境下存储为 basic auth 示例。",
+    secretValue: "release-bot:Harbor123!",
+    valueMasked: maskSecret("release-bot:Harbor123!"),
+    usedBy: ["harbor-prod"],
+    updatedAt: now(),
+  });
+
+  const registryId = crypto.randomUUID();
+  db.registries.push({
+    id: registryId,
+    name: "harbor-prod",
+    url: "https://harbor.aegisops.local",
+    authType: "BASIC",
+    secretId: registrySecretId,
+    description: "生产镜像仓库，用于二期发布链路演示。",
+    status: "ONLINE",
+    lastTestAt: now(),
+    createdBy: admin.id,
+    updatedBy: admin.id,
+    createdAt: now(),
+    updatedAt: now(),
+  });
+  db.registryCatalogs[registryId] = {
+    repositories: ["aegisops/api", "aegisops/console", "aegisops/worker"],
+    tags: {
+      "aegisops/api": ["v0.1.0", "v0.2.0", "latest"],
+      "aegisops/console": ["v0.2.0", "main-20260514", "latest"],
+      "aegisops/worker": ["v0.1.3", "v0.2.0-rc1"],
+    },
+    manifests: {
+      "aegisops/api": {
+        "v0.1.0": {
+          digest: "sha256:7fb6c95aa3c7456d4eac3af9122c7c8dd7e5c8e6a178efcae738aa01b8169d10",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:api-v010", size: 1780 },
+            layers: [{ digest: "sha256:api-layer-1", size: 1024 }],
+          },
+        },
+        "v0.2.0": {
+          digest: "sha256:9b1c9ef81ee8603cc502af42be1dd88d9637b6d96398b5aa07ed9e419f5bb2ab",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:api-v020", size: 1824 },
+            layers: [{ digest: "sha256:api-layer-2", size: 2048 }],
+          },
+        },
+        latest: {
+          digest: "sha256:9b1c9ef81ee8603cc502af42be1dd88d9637b6d96398b5aa07ed9e419f5bb2ab",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:api-v020", size: 1824 },
+            layers: [{ digest: "sha256:api-layer-2", size: 2048 }],
+          },
+        },
+      },
+      "aegisops/console": {
+        "v0.2.0": {
+          digest: "sha256:34c011cb7d08b2d997d13ac60c8edc3df6caf90bf9d5e0d17c6e0fbfd3db5108",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:console-v020", size: 1544 },
+            layers: [{ digest: "sha256:console-layer-1", size: 4096 }],
+          },
+        },
+        "main-20260514": {
+          digest: "sha256:8e9cbc69487b94914c5235f170d0f4dcb267d2df14d744fa0fa51f9c6211f947",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:console-main-20260514", size: 1622 },
+            layers: [{ digest: "sha256:console-layer-2", size: 6144 }],
+          },
+        },
+        latest: {
+          digest: "sha256:8e9cbc69487b94914c5235f170d0f4dcb267d2df14d744fa0fa51f9c6211f947",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:console-main-20260514", size: 1622 },
+            layers: [{ digest: "sha256:console-layer-2", size: 6144 }],
+          },
+        },
+      },
+      "aegisops/worker": {
+        "v0.1.3": {
+          digest: "sha256:0cb1cb17ddf7c93f24574ff544d1bce28f30c747831c7aee3c19d14e4b9e6f10",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:worker-v013", size: 1337 },
+            layers: [{ digest: "sha256:worker-layer-1", size: 512 }],
+          },
+        },
+        "v0.2.0-rc1": {
+          digest: "sha256:7e88c2d8348e2088095c733fca488e5ce537a0ff9dd4f829d8c0bc6363915ca2",
+          contentType: "application/vnd.oci.image.manifest.v1+json",
+          manifest: {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            config: { digest: "sha256:worker-v020rc1", size: 1488 },
+            layers: [{ digest: "sha256:worker-layer-2", size: 768 }],
+          },
+        },
+      },
+    },
+  };
+
   const nodeId = crypto.randomUUID();
   db.dockerNodes.push({
     id: nodeId,
@@ -367,6 +552,14 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     result: "SUCCESS",
     summary: "初始化管理员并注入一期演示数据。",
   });
+  appendAudit(db, {
+    actor: admin.displayName,
+    action: "registry.create",
+    resourceType: "registry",
+    resourceName: "harbor-prod",
+    result: "SUCCESS",
+    summary: "注入二期 Registry 演示数据。",
+  });
 }
 
 function filterByKeyword<T>(items: T[], keyword: string, mapper: (item: T) => string) {
@@ -384,6 +577,100 @@ function getContainerLogs(containerName: string) {
     `[${now()}] WARN Health probe latency 220ms`,
     `[${now()}] INFO Last deploy completed`,
   ];
+}
+
+function validateRegistryPayload(payload: RegistryInput) {
+  const fieldErrors: FieldErrors = {};
+  if (!payload.name.trim()) {
+    fieldErrors.name = "请输入 Registry 名称";
+  }
+  if (!payload.url.trim()) {
+    fieldErrors.url = "请输入 Registry 地址";
+  }
+  if (payload.authType !== "NONE" && !(payload.secretId ?? "").trim()) {
+    fieldErrors.secretId = "当前认证方式需要绑定凭证";
+  }
+  if (Object.keys(fieldErrors).length) {
+    throw new ApiError({
+      status: 422,
+      code: "VALIDATION_ERROR",
+      message: "请补全 Registry 信息。",
+      traceId: traceId(),
+      fieldErrors,
+    });
+  }
+}
+
+function matchRegistryError(message: string) {
+  if (message.includes("auth")) {
+    return {
+      status: 401,
+      code: "REGISTRY_AUTH_FAILED",
+      message,
+    };
+  }
+  if (message.includes("network")) {
+    return {
+      status: 502,
+      code: "REGISTRY_NETWORK_ERROR",
+      message,
+    };
+  }
+  if (message.includes("not found")) {
+    return {
+      status: 404,
+      code: "REGISTRY_RESOURCE_NOT_FOUND",
+      message,
+    };
+  }
+  return {
+    status: 400,
+    code: "REGISTRY_ERROR",
+    message,
+  };
+}
+
+function getRegistryOrThrow(db: MockDb, registryId: string) {
+  const registry = db.registries.find((item) => item.id === registryId);
+  if (!registry) {
+    throw new ApiError({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "Registry 不存在。",
+      traceId: traceId(),
+    });
+  }
+  return registry;
+}
+
+function getRegistryCatalogOrThrow(db: MockDb, registryId: string) {
+  const catalog = db.registryCatalogs[registryId];
+  if (!catalog) {
+    throw new ApiError({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "Registry 目录不存在。",
+      traceId: traceId(),
+    });
+  }
+  return catalog;
+}
+
+function bindSecretUsage(db: MockDb, secretId: string | undefined, resourceName: string, enabled: boolean) {
+  if (!secretId) {
+    return;
+  }
+  const secret = db.secrets.find((item) => item.id === secretId);
+  if (!secret) {
+    return;
+  }
+  const next = new Set(secret.usedBy);
+  if (enabled) {
+    next.add(resourceName);
+  } else {
+    next.delete(resourceName);
+  }
+  secret.usedBy = Array.from(next);
 }
 
 export const mockService = {
@@ -826,6 +1113,242 @@ export const mockService = {
     });
     writeDb(db);
     return delay(host);
+  },
+
+  async listRegistries(token: string | null, keyword = "") {
+    const db = readDb();
+    requirePermission(token, "registries.view", db);
+    return delay(
+      filterByKeyword(db.registries, keyword, (item) => `${item.name} ${item.url} ${item.description ?? ""}`),
+    );
+  },
+
+  async getRegistry(token: string | null, registryId: string) {
+    const db = readDb();
+    requirePermission(token, "registries.view", db);
+    return delay(getRegistryOrThrow(db, registryId));
+  },
+
+  async saveRegistry(token: string | null, payload: RegistryInput) {
+    const db = readDb();
+    const actor = requirePermission(token, "registries.manage", db);
+    validateRegistryPayload(payload);
+    if (
+      payload.authType !== "NONE" &&
+      payload.secretId &&
+      !db.secrets.some((item) => item.id === payload.secretId)
+    ) {
+      throw new ApiError({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: "绑定的凭证不存在。",
+        traceId: traceId(),
+        fieldErrors: { secretId: "绑定的凭证不存在" },
+      });
+    }
+    assertUniqueName(
+      !db.registries.some((item) => item.name === payload.name && item.id !== payload.id),
+      "Registry 名称已存在。",
+      { name: "Registry 名称已存在" },
+    );
+
+    if (payload.id) {
+      const registry = getRegistryOrThrow(db, payload.id);
+      bindSecretUsage(db, registry.secretId, registry.name, false);
+      registry.name = payload.name.trim();
+      registry.url = payload.url.trim();
+      registry.authType = payload.authType;
+      registry.secretId = payload.authType === "NONE" ? "" : (payload.secretId ?? "").trim();
+      registry.description = payload.description?.trim();
+      registry.status = "UNKNOWN";
+      registry.lastTestAt = undefined;
+      registry.updatedBy = actor.id;
+      registry.updatedAt = now();
+      bindSecretUsage(db, registry.secretId, registry.name, true);
+      db.registryCatalogs[registry.id] = db.registryCatalogs[registry.id] ?? {
+        repositories: [],
+        tags: {},
+        manifests: {},
+      };
+      appendAudit(db, {
+        actor: actor.displayName,
+        action: "registry.update",
+        resourceType: "registry",
+        resourceName: registry.name,
+        result: "SUCCESS",
+        summary: "更新 Registry 配置。",
+      });
+      writeDb(db);
+      return delay(registry);
+    }
+
+    const registryId = crypto.randomUUID();
+    const created: Registry = {
+      id: registryId,
+      name: payload.name.trim(),
+      url: payload.url.trim(),
+      authType: payload.authType,
+      secretId: payload.authType === "NONE" ? "" : (payload.secretId ?? "").trim(),
+      description: payload.description?.trim(),
+      status: "UNKNOWN",
+      createdBy: actor.id,
+      updatedBy: actor.id,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.registries.unshift(created);
+    db.registryCatalogs[registryId] = {
+      repositories: [],
+      tags: {},
+      manifests: {},
+    };
+    bindSecretUsage(db, created.secretId, created.name, true);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "registry.create",
+      resourceType: "registry",
+      resourceName: created.name,
+      result: "SUCCESS",
+      summary: "创建新的 Registry。",
+    });
+    writeDb(db);
+    return delay(created);
+  },
+
+  async deleteRegistry(token: string | null, registryId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "registries.manage", db);
+    const registry = getRegistryOrThrow(db, registryId);
+    bindSecretUsage(db, registry.secretId, registry.name, false);
+    db.registries = db.registries.filter((item) => item.id !== registryId);
+    delete db.registryCatalogs[registryId];
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "registry.delete",
+      resourceType: "registry",
+      resourceName: registry.name,
+      result: "SUCCESS",
+      summary: "删除 Registry。",
+    });
+    writeDb(db);
+    return delay({ deleted: true });
+  },
+
+  async testRegistry(token: string | null, registryId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "registries.manage", db);
+    const registry = getRegistryOrThrow(db, registryId);
+    const secret = registry.secretId ? db.secrets.find((item) => item.id === registry.secretId) : undefined;
+    let errorMessage = "";
+    if (registry.url.includes("offline") || registry.url.includes("timeout")) {
+      errorMessage = "registry network error: dial tcp timeout";
+    } else if (registry.authType !== "NONE" && !secret) {
+      errorMessage = "registry authentication failed: bound secret not found";
+    } else if (
+      registry.authType === "BASIC" &&
+      secret &&
+      (!secret.secretValue.includes(":") || secret.secretValue.startsWith("invalid"))
+    ) {
+      errorMessage = "registry authentication failed: basic secret must use username:password format";
+    }
+
+    registry.lastTestAt = now();
+    registry.updatedBy = actor.id;
+    registry.updatedAt = registry.lastTestAt;
+
+    if (errorMessage) {
+      registry.status = "OFFLINE";
+      appendAudit(db, {
+        actor: actor.displayName,
+        action: "registry.test",
+        resourceType: "registry",
+        resourceName: registry.name,
+        result: "FAILED",
+        summary: errorMessage,
+      });
+      writeDb(db);
+      const matched = matchRegistryError(errorMessage);
+      throw new ApiError({
+        status: matched.status,
+        code: matched.code,
+        message: matched.message,
+        traceId: traceId(),
+      });
+    }
+
+    registry.status = "ONLINE";
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "registry.test",
+      resourceType: "registry",
+      resourceName: registry.name,
+      result: "SUCCESS",
+      summary: "执行 Registry 连通性测试并返回成功。",
+    });
+    writeDb(db);
+    return delay({ connected: true });
+  },
+
+  async listRegistryRepositories(token: string | null, registryId: string): Promise<RegistryRepositoriesResult> {
+    const db = readDb();
+    requirePermission(token, "registries.view", db);
+    getRegistryOrThrow(db, registryId);
+    const catalog = getRegistryCatalogOrThrow(db, registryId);
+    return delay({ repositories: [...catalog.repositories] });
+  },
+
+  async listRegistryTags(
+    token: string | null,
+    registryId: string,
+    repository: string,
+  ): Promise<RegistryTagsResult> {
+    const db = readDb();
+    requirePermission(token, "registries.view", db);
+    getRegistryOrThrow(db, registryId);
+    const catalog = getRegistryCatalogOrThrow(db, registryId);
+    const tags = catalog.tags[repository];
+    if (!tags) {
+      const matched = matchRegistryError("registry resource not found: repository not found");
+      throw new ApiError({
+        status: matched.status,
+        code: matched.code,
+        message: matched.message,
+        traceId: traceId(),
+      });
+    }
+    return delay({
+      name: repository,
+      tags: [...tags],
+    });
+  },
+
+  async getRegistryManifest(
+    token: string | null,
+    registryId: string,
+    repository: string,
+    reference: string,
+  ): Promise<RegistryManifestResult> {
+    const db = readDb();
+    requirePermission(token, "registries.view", db);
+    getRegistryOrThrow(db, registryId);
+    const catalog = getRegistryCatalogOrThrow(db, registryId);
+    const manifest = catalog.manifests[repository]?.[reference];
+    if (!manifest) {
+      const matched = matchRegistryError("registry resource not found: manifest not found");
+      throw new ApiError({
+        status: matched.status,
+        code: matched.code,
+        message: matched.message,
+        traceId: traceId(),
+      });
+    }
+    return delay({
+      repository,
+      reference,
+      digest: manifest.digest,
+      contentType: manifest.contentType,
+      manifest: manifest.manifest,
+    });
   },
 
   async testHostSsh(token: string | null, hostId: string) {

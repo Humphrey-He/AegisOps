@@ -85,7 +85,12 @@ export function AppShell() {
             </Space>
           ) : null}
         </div>
-        <Menu mode="inline" selectedKeys={[selectedKey]} defaultOpenKeys={["assets", "docker", "system"]} items={menuItems} />
+        <Menu
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          defaultOpenKeys={["assets", "docker", "delivery", "system"]}
+          items={menuItems}
+        />
       </Sider>
       <Layout>
         <Header
