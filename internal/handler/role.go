@@ -97,8 +97,8 @@ func (h *RoleHandler) Update(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
-	var role model.Role
 	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		var role model.Role
 		if err := tx.First(&role, id).Error; err != nil {
 			return err
 		}
@@ -110,13 +110,18 @@ func (h *RoleHandler) Update(c *gin.Context) {
 			return err
 		}
 		if req.PermissionIDs != nil {
-			if err := replaceRolePermissions(tx, id, req.PermissionIDs); err != nil {
+			if err := syncRolePermissions(tx, id, req.PermissionIDs); err != nil {
 				return err
 			}
 		}
-		return tx.Preload("Permissions").First(&role, id).Error
+		return nil
 	})
 	if err != nil {
+		writeError(c, err)
+		return
+	}
+	var role model.Role
+	if err := h.db.WithContext(c.Request.Context()).Preload("Permissions").First(&role, id).Error; err != nil {
 		writeError(c, err)
 		return
 	}
@@ -168,10 +173,37 @@ func (h *RoleHandler) CreatePermission(c *gin.Context) {
 }
 
 func replaceRolePermissions(tx *gorm.DB, roleID uint, permissionIDs []uint) error {
-	if err := tx.Where("role_id = ?", roleID).Delete(&model.RolePermission{}).Error; err != nil {
+	return syncRolePermissions(tx, roleID, permissionIDs)
+}
+
+func syncRolePermissions(tx *gorm.DB, roleID uint, permissionIDs []uint) error {
+	var current []model.RolePermission
+	if err := tx.Where("role_id = ?", roleID).Find(&current).Error; err != nil {
 		return err
 	}
+	currentSet := make(map[uint]struct{}, len(current))
+	nextSet := make(map[uint]struct{}, len(permissionIDs))
+	for _, item := range current {
+		currentSet[item.PermissionID] = struct{}{}
+	}
 	for _, permissionID := range permissionIDs {
+		nextSet[permissionID] = struct{}{}
+	}
+	var removeIDs []uint
+	for permissionID := range currentSet {
+		if _, ok := nextSet[permissionID]; !ok {
+			removeIDs = append(removeIDs, permissionID)
+		}
+	}
+	if len(removeIDs) > 0 {
+		if err := tx.Where("role_id = ? AND permission_id IN ?", roleID, removeIDs).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
+		}
+	}
+	for permissionID := range nextSet {
+		if _, ok := currentSet[permissionID]; ok {
+			continue
+		}
 		if err := tx.Create(&model.RolePermission{RoleID: roleID, PermissionID: permissionID}).Error; err != nil {
 			return err
 		}

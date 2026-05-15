@@ -118,8 +118,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
-	var user model.User
 	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		var user model.User
 		if err := tx.First(&user, id).Error; err != nil {
 			return err
 		}
@@ -149,13 +149,18 @@ func (h *UserHandler) Update(c *gin.Context) {
 			}
 		}
 		if req.RoleIDs != nil {
-			if err := replaceUserRoles(tx, id, req.RoleIDs); err != nil {
+			if err := syncUserRoles(tx, id, req.RoleIDs); err != nil {
 				return err
 			}
 		}
-		return tx.Preload("Roles").First(&user, id).Error
+		return nil
 	})
 	if err != nil {
+		writeError(c, err)
+		return
+	}
+	var user model.User
+	if err := h.db.WithContext(c.Request.Context()).Preload("Roles").First(&user, id).Error; err != nil {
 		writeError(c, err)
 		return
 	}
@@ -177,10 +182,37 @@ func (h *UserHandler) Delete(c *gin.Context) {
 }
 
 func replaceUserRoles(tx *gorm.DB, userID uint, roleIDs []uint) error {
-	if err := tx.Where("user_id = ?", userID).Delete(&model.UserRole{}).Error; err != nil {
+	return syncUserRoles(tx, userID, roleIDs)
+}
+
+func syncUserRoles(tx *gorm.DB, userID uint, roleIDs []uint) error {
+	var current []model.UserRole
+	if err := tx.Where("user_id = ?", userID).Find(&current).Error; err != nil {
 		return err
 	}
+	currentSet := make(map[uint]struct{}, len(current))
+	nextSet := make(map[uint]struct{}, len(roleIDs))
+	for _, item := range current {
+		currentSet[item.RoleID] = struct{}{}
+	}
 	for _, roleID := range roleIDs {
+		nextSet[roleID] = struct{}{}
+	}
+	var removeIDs []uint
+	for roleID := range currentSet {
+		if _, ok := nextSet[roleID]; !ok {
+			removeIDs = append(removeIDs, roleID)
+		}
+	}
+	if len(removeIDs) > 0 {
+		if err := tx.Where("user_id = ? AND role_id IN ?", userID, removeIDs).Delete(&model.UserRole{}).Error; err != nil {
+			return err
+		}
+	}
+	for roleID := range nextSet {
+		if _, ok := currentSet[roleID]; ok {
+			continue
+		}
 		if err := tx.Create(&model.UserRole{UserID: userID, RoleID: roleID}).Error; err != nil {
 			return err
 		}

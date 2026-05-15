@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	"github.com/Humphrey-He/AegisOps/internal/rbac"
 	"github.com/Humphrey-He/AegisOps/internal/task"
 )
 
@@ -17,12 +18,12 @@ func NewTaskHandler(service *task.Service) *TaskHandler {
 	return &TaskHandler{service: service}
 }
 
-func (h *TaskHandler) RegisterRoutes(r gin.IRouter) {
-	r.GET("/tasks", h.List)
-	r.POST("/tasks", h.Create)
-	r.GET("/tasks/:id", h.Get)
-	r.POST("/tasks/:id/steps", h.AddStep)
-	r.POST("/tasks/:id/logs", h.AddLog)
+func (h *TaskHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
+	r.GET("/tasks", rbac.RequirePermission(rbacService, "tasks.view"), h.List)
+	r.POST("/tasks", rbac.RequirePermission(rbacService, "tasks.view"), h.Create)
+	r.GET("/tasks/:id", rbac.RequirePermission(rbacService, "tasks.view"), h.Get)
+	r.POST("/tasks/:id/steps", rbac.RequirePermission(rbacService, "tasks.view"), h.AddStep)
+	r.POST("/tasks/:id/logs", rbac.RequirePermission(rbacService, "tasks.view"), h.AddLog)
 }
 
 func (h *TaskHandler) List(c *gin.Context) {

@@ -5,29 +5,33 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Humphrey-He/AegisOps/internal/audit"
 	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
+	"github.com/Humphrey-He/AegisOps/internal/model"
+	"github.com/Humphrey-He/AegisOps/internal/rbac"
 )
 
 type DockerHandler struct {
 	service *dockersvc.Service
+	audit   *audit.Service
 }
 
-func NewDockerHandler(service *dockersvc.Service) *DockerHandler {
-	return &DockerHandler{service: service}
+func NewDockerHandler(service *dockersvc.Service, auditService *audit.Service) *DockerHandler {
+	return &DockerHandler{service: service, audit: auditService}
 }
 
-func (h *DockerHandler) RegisterRoutes(r gin.IRouter) {
-	r.GET("/docker/nodes", h.ListNodes)
-	r.POST("/docker/nodes", h.CreateNode)
-	r.GET("/docker/nodes/:id", h.GetNode)
-	r.PATCH("/docker/nodes/:id", h.UpdateNode)
-	r.DELETE("/docker/nodes/:id", h.DeleteNode)
-	r.POST("/docker/nodes/:id/test", h.TestConnection)
-	r.GET("/docker/nodes/:id/containers", h.ListContainers)
-	r.GET("/docker/nodes/:id/containers/:containerId/logs", h.ContainerLogs)
-	r.POST("/docker/nodes/:id/containers/:containerId/start", h.StartContainer)
-	r.POST("/docker/nodes/:id/containers/:containerId/stop", h.StopContainer)
-	r.POST("/docker/nodes/:id/containers/:containerId/restart", h.RestartContainer)
+func (h *DockerHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
+	r.GET("/docker/nodes", rbac.RequirePermission(rbacService, "docker.view"), h.ListNodes)
+	r.POST("/docker/nodes", rbac.RequirePermission(rbacService, "docker.manage"), h.CreateNode)
+	r.GET("/docker/nodes/:id", rbac.RequirePermission(rbacService, "docker.view"), h.GetNode)
+	r.PATCH("/docker/nodes/:id", rbac.RequirePermission(rbacService, "docker.manage"), h.UpdateNode)
+	r.DELETE("/docker/nodes/:id", rbac.RequirePermission(rbacService, "docker.manage"), h.DeleteNode)
+	r.POST("/docker/nodes/:id/test", rbac.RequirePermission(rbacService, "docker.manage"), h.TestConnection)
+	r.GET("/docker/nodes/:id/containers", rbac.RequirePermission(rbacService, "docker.view"), h.ListContainers)
+	r.GET("/docker/nodes/:id/containers/:containerId/logs", rbac.RequirePermission(rbacService, "docker.view"), h.ContainerLogs)
+	r.POST("/docker/nodes/:id/containers/:containerId/start", rbac.RequirePermission(rbacService, "docker.manage"), h.StartContainer)
+	r.POST("/docker/nodes/:id/containers/:containerId/stop", rbac.RequirePermission(rbacService, "docker.manage"), h.StopContainer)
+	r.POST("/docker/nodes/:id/containers/:containerId/restart", rbac.RequirePermission(rbacService, "docker.manage"), h.RestartContainer)
 }
 
 func (h *DockerHandler) ListNodes(c *gin.Context) {
@@ -52,6 +56,7 @@ func (h *DockerHandler) CreateNode(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "docker_node.create", ResourceType: "docker_node", ResourceID: item.ID, Result: model.AuditResultSuccess})
 	Created(c, item)
 }
 
@@ -76,6 +81,7 @@ func (h *DockerHandler) UpdateNode(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "docker_node.update", ResourceType: "docker_node", ResourceID: item.ID, Result: model.AuditResultSuccess})
 	OK(c, item)
 }
 
@@ -84,15 +90,19 @@ func (h *DockerHandler) DeleteNode(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "docker_node.delete", ResourceType: "docker_node", ResourceID: c.Param("id"), Result: model.AuditResultSuccess})
 	OK(c, gin.H{"deleted": true})
 }
 
 func (h *DockerHandler) TestConnection(c *gin.Context) {
-	if err := h.service.TestConnection(c.Request.Context(), c.Param("id")); err != nil {
+	taskID, err := h.service.TestConnectionTask(c.Request.Context(), c.Param("id"), OperatorID(c))
+	if err != nil {
+		_ = h.audit.RecordGin(c, audit.Entry{Action: "docker_node.test", ResourceType: "docker_node", ResourceID: c.Param("id"), Result: model.AuditResultFailure, Message: err.Error()})
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	OK(c, gin.H{"connected": true})
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "docker_node.test", ResourceType: "docker_node", ResourceID: c.Param("id"), Result: model.AuditResultSuccess})
+	OK(c, gin.H{"connected": true, "taskId": taskID})
 }
 
 func (h *DockerHandler) ListContainers(c *gin.Context) {
@@ -114,25 +124,34 @@ func (h *DockerHandler) ContainerLogs(c *gin.Context) {
 }
 
 func (h *DockerHandler) StartContainer(c *gin.Context) {
-	if err := h.service.StartContainer(c.Request.Context(), c.Param("id"), c.Param("containerId")); err != nil {
+	taskID, err := h.service.StartContainerTask(c.Request.Context(), c.Param("id"), c.Param("containerId"), OperatorID(c))
+	if err != nil {
+		_ = h.audit.RecordGin(c, audit.Entry{Action: "container.start", ResourceType: "container", ResourceID: c.Param("containerId"), Result: model.AuditResultFailure, Message: err.Error()})
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	OK(c, gin.H{"started": true})
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "container.start", ResourceType: "container", ResourceID: c.Param("containerId"), Result: model.AuditResultSuccess})
+	OK(c, gin.H{"started": true, "taskId": taskID})
 }
 
 func (h *DockerHandler) StopContainer(c *gin.Context) {
-	if err := h.service.StopContainer(c.Request.Context(), c.Param("id"), c.Param("containerId")); err != nil {
+	taskID, err := h.service.StopContainerTask(c.Request.Context(), c.Param("id"), c.Param("containerId"), OperatorID(c))
+	if err != nil {
+		_ = h.audit.RecordGin(c, audit.Entry{Action: "container.stop", ResourceType: "container", ResourceID: c.Param("containerId"), Result: model.AuditResultFailure, Message: err.Error()})
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	OK(c, gin.H{"stopped": true})
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "container.stop", ResourceType: "container", ResourceID: c.Param("containerId"), Result: model.AuditResultSuccess})
+	OK(c, gin.H{"stopped": true, "taskId": taskID})
 }
 
 func (h *DockerHandler) RestartContainer(c *gin.Context) {
-	if err := h.service.RestartContainer(c.Request.Context(), c.Param("id"), c.Param("containerId")); err != nil {
+	taskID, err := h.service.RestartContainerTask(c.Request.Context(), c.Param("id"), c.Param("containerId"), OperatorID(c))
+	if err != nil {
+		_ = h.audit.RecordGin(c, audit.Entry{Action: "container.restart", ResourceType: "container", ResourceID: c.Param("containerId"), Result: model.AuditResultFailure, Message: err.Error()})
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	OK(c, gin.H{"restarted": true})
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "container.restart", ResourceType: "container", ResourceID: c.Param("containerId"), Result: model.AuditResultSuccess})
+	OK(c, gin.H{"restarted": true, "taskId": taskID})
 }

@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,7 +12,8 @@ import (
 )
 
 type Service struct {
-	db *gorm.DB
+	db      *gorm.DB
+	writeMu sync.Mutex
 }
 
 type CreateRequest struct {
@@ -34,16 +36,35 @@ func NewService(db *gorm.DB) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Task, error) {
+	return s.CreateWithStatus(ctx, req, model.TaskStatusPending)
+}
+
+func (s *Service) CreateRunning(ctx context.Context, req CreateRequest) (*model.Task, error) {
+	return s.CreateWithStatus(ctx, req, model.TaskStatusRunning)
+}
+
+func (s *Service) CreateWithStatus(ctx context.Context, req CreateRequest, status model.TaskStatus) (*model.Task, error) {
+	if status == "" {
+		status = model.TaskStatusPending
+	}
+	var startedAt *time.Time
+	if status == model.TaskStatusRunning {
+		now := time.Now().UTC()
+		startedAt = &now
+	}
 	item := &model.Task{
 		ID:         uuid.NewString(),
 		Type:       req.Type,
 		Title:      req.Title,
-		Status:     model.TaskStatusPending,
+		Status:     status,
 		TargetType: req.TargetType,
 		TargetID:   req.TargetID,
 		Payload:    req.Payload,
 		CreatedBy:  req.CreatedBy,
+		StartedAt:  startedAt,
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(item).Error; err != nil {
 			return err
@@ -99,6 +120,8 @@ func (s *Service) Get(ctx context.Context, id string) (*model.Task, error) {
 
 func (s *Service) Start(ctx context.Context, id string) error {
 	now := time.Now().UTC()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return s.db.WithContext(ctx).Model(&model.Task{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"status":     model.TaskStatusRunning,
 		"started_at": &now,
@@ -107,6 +130,8 @@ func (s *Service) Start(ctx context.Context, id string) error {
 
 func (s *Service) Finish(ctx context.Context, id string, status model.TaskStatus, result, errMessage string) error {
 	now := time.Now().UTC()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return s.db.WithContext(ctx).Model(&model.Task{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"status":      status,
 		"result":      result,
@@ -123,6 +148,8 @@ func (s *Service) AddStep(ctx context.Context, taskID, name string, sortOrder in
 		Status:    model.TaskStatusPending,
 		SortOrder: sortOrder,
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return step, s.db.WithContext(ctx).Create(step).Error
 }
 
@@ -139,6 +166,8 @@ func (s *Service) UpdateStep(ctx context.Context, stepID string, status model.Ta
 	if status == model.TaskStatusSuccess || status == model.TaskStatusFailed || status == model.TaskStatusCanceled {
 		updates["finished_at"] = &now
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return s.db.WithContext(ctx).Model(&model.TaskStep{}).Where("id = ?", stepID).Updates(updates).Error
 }
 
@@ -150,5 +179,7 @@ func (s *Service) AddLog(ctx context.Context, taskID, stepID string, level model
 		Level:   level,
 		Message: message,
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return log, s.db.WithContext(ctx).Create(log).Error
 }

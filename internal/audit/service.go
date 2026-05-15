@@ -2,6 +2,8 @@ package audit
 
 import (
 	"context"
+	"log"
+	"sync"
 
 	"github.com/Humphrey-He/AegisOps/internal/auth"
 	"github.com/Humphrey-He/AegisOps/internal/model"
@@ -10,7 +12,10 @@ import (
 )
 
 type Service struct {
-	db *gorm.DB
+	db      *gorm.DB
+	queue   chan model.AuditLog
+	once    sync.Once
+	writeMu sync.Mutex
 }
 
 type Entry struct {
@@ -27,7 +32,9 @@ type Entry struct {
 }
 
 func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+	service := &Service{db: db, queue: make(chan model.AuditLog, 256)}
+	service.startWorker()
+	return service
 }
 
 func (s *Service) Record(ctx context.Context, entry Entry) error {
@@ -46,7 +53,30 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 		UserAgent:    entry.UserAgent,
 		TraceID:      entry.TraceID,
 	}
-	return s.db.WithContext(ctx).Create(&log).Error
+	select {
+	case s.queue <- log:
+	default:
+		go s.insert(context.Background(), log)
+	}
+	return nil
+}
+
+func (s *Service) startWorker() {
+	s.once.Do(func() {
+		go func() {
+			for logItem := range s.queue {
+				s.insert(context.Background(), logItem)
+			}
+		}()
+	})
+}
+
+func (s *Service) insert(ctx context.Context, logItem model.AuditLog) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.db.WithContext(ctx).Create(&logItem).Error; err != nil {
+		log.Printf("record audit log failed: %v", err)
+	}
 }
 
 func (s *Service) RecordGin(c *gin.Context, entry Entry) error {

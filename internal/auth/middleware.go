@@ -13,13 +13,19 @@ const CurrentUserKey = "currentUser"
 func Middleware(service *Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+		rawToken := ""
+		if strings.HasPrefix(header, "Bearer ") {
+			rawToken = strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+		} else if isWebSocketUpgrade(c) {
+			rawToken = strings.TrimSpace(c.Query("token"))
+		}
+		if rawToken == "" {
 			response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing bearer token")
 			c.Abort()
 			return
 		}
 
-		claims, err := service.ParseToken(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")), "access")
+		claims, err := service.ParseToken(rawToken, "access")
 		if err != nil {
 			response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid token")
 			c.Abort()
@@ -34,4 +40,9 @@ func Middleware(service *Service) gin.HandlerFunc {
 		c.Set(CurrentUserKey, user)
 		c.Next()
 	}
+}
+
+func isWebSocketUpgrade(c *gin.Context) bool {
+	return strings.EqualFold(c.GetHeader("Upgrade"), "websocket") &&
+		strings.Contains(strings.ToLower(c.GetHeader("Connection")), "upgrade")
 }

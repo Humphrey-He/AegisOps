@@ -34,10 +34,10 @@ type Task struct {
 
 type TaskStep struct {
 	ID         string     `gorm:"primaryKey;size:36" json:"id"`
-	TaskID     string     `gorm:"size:36;not null;index" json:"taskId"`
+	TaskID     string     `gorm:"size:36;not null;index;index:idx_task_steps_task_sort,priority:1" json:"taskId"`
 	Name       string     `gorm:"size:128;not null" json:"name"`
 	Status     TaskStatus `gorm:"size:32;not null;default:PENDING;index" json:"status"`
-	SortOrder  int        `gorm:"not null;default:0" json:"sortOrder"`
+	SortOrder  int        `gorm:"not null;default:0;index:idx_task_steps_task_sort,priority:2" json:"sortOrder"`
 	Result     string     `gorm:"type:text" json:"result"`
 	Error      string     `gorm:"type:text" json:"error"`
 	StartedAt  *time.Time `json:"startedAt"`
@@ -56,9 +56,9 @@ const (
 
 type TaskLog struct {
 	ID        string       `gorm:"primaryKey;size:36" json:"id"`
-	TaskID    string       `gorm:"size:36;not null;index" json:"taskId"`
+	TaskID    string       `gorm:"size:36;not null;index;index:idx_task_logs_task_created,priority:1" json:"taskId"`
 	StepID    string       `gorm:"size:36;index" json:"stepId"`
 	Level     TaskLogLevel `gorm:"size:16;not null;default:INFO" json:"level"`
 	Message   string       `gorm:"type:text;not null" json:"message"`
-	CreatedAt time.Time    `gorm:"index" json:"createdAt"`
+	CreatedAt time.Time    `gorm:"index;index:idx_task_logs_task_created,priority:2" json:"createdAt"`
 }

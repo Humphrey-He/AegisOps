@@ -5,23 +5,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Humphrey-He/AegisOps/internal/audit"
+	"github.com/Humphrey-He/AegisOps/internal/model"
+	"github.com/Humphrey-He/AegisOps/internal/rbac"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
 )
 
 type SecretHandler struct {
 	service *secret.Service
+	audit   *audit.Service
 }
 
-func NewSecretHandler(service *secret.Service) *SecretHandler {
-	return &SecretHandler{service: service}
+func NewSecretHandler(service *secret.Service, auditService *audit.Service) *SecretHandler {
+	return &SecretHandler{service: service, audit: auditService}
 }
 
-func (h *SecretHandler) RegisterRoutes(r gin.IRouter) {
-	r.GET("/secrets", h.List)
-	r.POST("/secrets", h.Create)
-	r.GET("/secrets/:id", h.Get)
-	r.PATCH("/secrets/:id", h.Update)
-	r.DELETE("/secrets/:id", h.Delete)
+func (h *SecretHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
+	r.GET("/secrets", rbac.RequirePermission(rbacService, "secrets.view"), h.List)
+	r.POST("/secrets", rbac.RequirePermission(rbacService, "secrets.manage"), h.Create)
+	r.GET("/secrets/:id", rbac.RequirePermission(rbacService, "secrets.view"), h.Get)
+	r.PATCH("/secrets/:id", rbac.RequirePermission(rbacService, "secrets.manage"), h.Update)
+	r.DELETE("/secrets/:id", rbac.RequirePermission(rbacService, "secrets.manage"), h.Delete)
 }
 
 func (h *SecretHandler) List(c *gin.Context) {
@@ -46,6 +50,7 @@ func (h *SecretHandler) Create(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "secret.create", ResourceType: "secret", ResourceID: item.ID, Result: model.AuditResultSuccess})
 	Created(c, item)
 }
 
@@ -70,6 +75,7 @@ func (h *SecretHandler) Update(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "secret.update", ResourceType: "secret", ResourceID: item.ID, Result: model.AuditResultSuccess})
 	OK(c, item)
 }
 
@@ -78,5 +84,6 @@ func (h *SecretHandler) Delete(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "secret.delete", ResourceType: "secret", ResourceID: c.Param("id"), Result: model.AuditResultSuccess})
 	OK(c, gin.H{"deleted": true})
 }

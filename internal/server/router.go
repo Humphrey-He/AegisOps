@@ -12,8 +12,11 @@ import (
 	hostsvc "github.com/Humphrey-He/AegisOps/internal/host"
 	"github.com/Humphrey-He/AegisOps/internal/middleware"
 	"github.com/Humphrey-He/AegisOps/internal/rbac"
+	registrysvc "github.com/Humphrey-He/AegisOps/internal/registry"
 	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
+	servicesvc "github.com/Humphrey-He/AegisOps/internal/service"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
+	terminalsvc "github.com/Humphrey-He/AegisOps/internal/terminal"
 	"github.com/Humphrey-He/AegisOps/pkg/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -72,23 +75,39 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	hostService := hostsvc.NewService(database, secretService)
 	taskService := tasksvc.NewService(database)
 	dockerService := dockersvc.NewService(database, secretService)
+	dockerService.SetTaskService(taskService)
+	terminalService := terminalsvc.NewService(database, secretService)
+	registryService := registrysvc.NewService(database, secretService)
+	var releaseExecutor servicesvc.ReleaseExecutor = servicesvc.NewDockerReleaseExecutor(dockerService)
+	if cfg.App.Env == "test" {
+		releaseExecutor = servicesvc.NoopReleaseExecutor{}
+	}
+	serviceService := servicesvc.NewService(database, taskService, releaseExecutor)
 
 	authHandler := handler.NewAuthHandler(authService, auditService)
 	userHandler := handler.NewUserHandler(database, authService, auditService)
 	roleHandler := handler.NewRoleHandler(database, auditService)
 	auditHandler := handler.NewAuditHandler(database)
-	secretHandler := handler.NewSecretHandler(secretService)
-	hostHandler := handler.NewHostHandler(hostService)
+	dashboardHandler := handler.NewDashboardHandler(database)
+	secretHandler := handler.NewSecretHandler(secretService, auditService)
+	hostHandler := handler.NewHostHandler(hostService, auditService)
 	taskHandler := handler.NewTaskHandler(taskService)
-	dockerHandler := handler.NewDockerHandler(dockerService)
+	dockerHandler := handler.NewDockerHandler(dockerService, auditService)
+	terminalHandler := handler.NewTerminalHandler(terminalService)
+	registryHandler := handler.NewRegistryHandler(registryService, auditService)
+	serviceHandler := handler.NewServiceHandler(serviceService, auditService)
 
 	handler.RegisterAuthRoutes(api, authHandler, authMiddleware)
-	handler.RegisterUserRoleAuditRoutes(api, authMiddleware, userHandler, roleHandler, auditHandler)
+	handler.RegisterUserRoleAuditRoutes(api, authMiddleware, rbacService, userHandler, roleHandler, auditHandler)
 	protected := api.Group("", authMiddleware)
-	secretHandler.RegisterRoutes(protected)
-	hostHandler.RegisterRoutes(protected)
-	taskHandler.RegisterRoutes(protected)
-	dockerHandler.RegisterRoutes(protected)
+	protected.GET("/dashboard/summary", rbac.RequirePermission(rbacService, "dashboard.view"), dashboardHandler.Summary)
+	secretHandler.RegisterRoutes(protected, rbacService)
+	hostHandler.RegisterRoutes(protected, rbacService)
+	taskHandler.RegisterRoutes(protected, rbacService)
+	dockerHandler.RegisterRoutes(protected, rbacService)
+	terminalHandler.RegisterRoutes(protected, rbacService)
+	registryHandler.RegisterRoutes(protected, rbacService)
+	serviceHandler.RegisterRoutes(protected, rbacService)
 
 	return r
 }

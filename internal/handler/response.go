@@ -1,9 +1,11 @@
 package handler
 
 import (
-	"net/http"
 	"strconv"
 
+	"github.com/Humphrey-He/AegisOps/internal/auth"
+	"github.com/Humphrey-He/AegisOps/internal/model"
+	"github.com/Humphrey-He/AegisOps/pkg/response"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,15 +17,15 @@ type PageResult struct {
 }
 
 func OK(c *gin.Context, data interface{}) {
-	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "ok", "data": data})
+	response.OK(c, data)
 }
 
 func Created(c *gin.Context, data interface{}) {
-	c.JSON(http.StatusCreated, gin.H{"code": 0, "message": "created", "data": data})
+	response.Created(c, data)
 }
 
 func Error(c *gin.Context, status int, message string) {
-	c.JSON(status, gin.H{"code": status, "message": message})
+	response.Error(c, status, "ERROR", message)
 }
 
 func Pagination(c *gin.Context) (int, int) {
@@ -39,10 +41,13 @@ func Pagination(c *gin.Context) (int, int) {
 }
 
 func OperatorID(c *gin.Context) string {
-	value, ok := c.Get("userId")
+	value, ok := c.Get(auth.CurrentUserKey)
 	if !ok {
 		return ""
 	}
-	id, _ := value.(string)
-	return id
+	user, ok := value.(*model.User)
+	if !ok || user == nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(user.ID), 10)
 }

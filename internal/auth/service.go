@@ -94,6 +94,10 @@ func (s *Service) InitAdmin(ctx context.Context) (*model.User, error) {
 	}
 
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		permissions, err := seedPermissions(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if err := tx.Create(user).Error; err != nil {
 			return err
 		}
@@ -101,12 +105,53 @@ func (s *Service) InitAdmin(ctx context.Context) (*model.User, error) {
 		if err := tx.FirstOrCreate(&role, model.Role{Code: role.Code}).Error; err != nil {
 			return err
 		}
+		for _, permission := range permissions {
+			if err := tx.FirstOrCreate(&model.RolePermission{}, model.RolePermission{
+				RoleID:       role.ID,
+				PermissionID: permission.ID,
+			}).Error; err != nil {
+				return err
+			}
+		}
 		return tx.Create(&model.UserRole{UserID: user.ID, RoleID: role.ID}).Error
 	})
 	if err != nil {
 		return nil, err
 	}
 	return user, nil
+}
+
+func seedPermissions(ctx context.Context, tx *gorm.DB) ([]model.Permission, error) {
+	definitions := []model.Permission{
+		{Name: "Dashboard View", Code: "dashboard.view", Resource: "dashboard", Action: "view"},
+		{Name: "Users View", Code: "users.view", Resource: "users", Action: "view"},
+		{Name: "Users Manage", Code: "users.manage", Resource: "users", Action: "manage"},
+		{Name: "Roles View", Code: "roles.view", Resource: "roles", Action: "view"},
+		{Name: "Roles Manage", Code: "roles.manage", Resource: "roles", Action: "manage"},
+		{Name: "Secrets View", Code: "secrets.view", Resource: "secrets", Action: "view"},
+		{Name: "Secrets Manage", Code: "secrets.manage", Resource: "secrets", Action: "manage"},
+		{Name: "Registries View", Code: "registries.view", Resource: "registries", Action: "view"},
+		{Name: "Registries Manage", Code: "registries.manage", Resource: "registries", Action: "manage"},
+		{Name: "Services View", Code: "services.view", Resource: "services", Action: "view"},
+		{Name: "Services Manage", Code: "services.manage", Resource: "services", Action: "manage"},
+		{Name: "Services Release", Code: "services.release", Resource: "services", Action: "release"},
+		{Name: "Hosts View", Code: "hosts.view", Resource: "hosts", Action: "view"},
+		{Name: "Hosts Manage", Code: "hosts.manage", Resource: "hosts", Action: "manage"},
+		{Name: "Terminal Open", Code: "terminal.open", Resource: "terminal", Action: "open"},
+		{Name: "Docker View", Code: "docker.view", Resource: "docker", Action: "view"},
+		{Name: "Docker Manage", Code: "docker.manage", Resource: "docker", Action: "manage"},
+		{Name: "Tasks View", Code: "tasks.view", Resource: "tasks", Action: "view"},
+		{Name: "Audits View", Code: "audits.view", Resource: "audits", Action: "view"},
+	}
+	permissions := make([]model.Permission, 0, len(definitions))
+	for _, definition := range definitions {
+		permission := definition
+		if err := tx.WithContext(ctx).Where("code = ?", definition.Code).FirstOrCreate(&permission, definition).Error; err != nil {
+			return nil, err
+		}
+		permissions = append(permissions, permission)
+	}
+	return permissions, nil
 }
 
 func (s *Service) Login(ctx context.Context, username, password string) (*LoginResult, error) {
