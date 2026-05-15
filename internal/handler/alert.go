@@ -26,6 +26,7 @@ func (h *AlertHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) 
 	r.PATCH("/alert-rules/:id", rbac.RequirePermission(rbacService, "alerts.manage"), h.UpdateRule)
 	r.DELETE("/alert-rules/:id", rbac.RequirePermission(rbacService, "alerts.manage"), h.DeleteRule)
 	r.GET("/alerts/events", rbac.RequirePermission(rbacService, "alerts.view"), h.ListEvents)
+	r.POST("/alerts/events", rbac.RequirePermission(rbacService, "alerts.manage"), h.CreateEvent)
 	r.GET("/alerts/events/:id", rbac.RequirePermission(rbacService, "alerts.view"), h.GetEvent)
 	r.POST("/alerts/events/:id/ack", rbac.RequirePermission(rbacService, "alerts.ack"), h.AckEvent)
 	r.POST("/alerts/events/:id/resolve", rbac.RequirePermission(rbacService, "alerts.ack"), h.ResolveEvent)
@@ -91,6 +92,21 @@ func (h *AlertHandler) ListEvents(c *gin.Context) {
 		return
 	}
 	OK(c, PageResult{Items: items, Total: total, Limit: limit, Offset: offset})
+}
+
+func (h *AlertHandler) CreateEvent(c *gin.Context) {
+	var req alert.EventRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, err := h.service.CreateEvent(c.Request.Context(), req)
+	if err != nil {
+		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	_ = h.audit.RecordGin(c, audit.Entry{Action: "alert_event.create", ResourceType: "alert_event", ResourceID: item.ID, Result: model.AuditResultSuccess})
+	Created(c, item)
 }
 
 func (h *AlertHandler) GetEvent(c *gin.Context) {

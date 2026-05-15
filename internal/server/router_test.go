@@ -441,6 +441,19 @@ func TestNotificationAlertAndHealthRoutesSmoke(t *testing.T) {
 		t.Fatalf("alert rule language = %q, want zh-CN", rulePayload.Data.Language)
 	}
 
+	createEvent := performRequest(router, http.MethodPost, "/api/alerts/events", []byte(`{
+		"eventType":"service_health_check_failed",
+		"resourceType":"service",
+		"resourceId":"svc-smoke",
+		"severity":"critical",
+		"summary":"service smoke alert",
+		"detail":"service smoke alert detail",
+		"dedupeKey":"service_health_check_failed:svc-smoke"
+	}`), token)
+	if createEvent.Code != http.StatusCreated {
+		t.Fatalf("POST /api/alerts/events status = %d, want %d; body=%s", createEvent.Code, http.StatusCreated, createEvent.Body.String())
+	}
+
 	for _, target := range []string{
 		"/api/notifications/channels",
 		"/api/notifications/records",
@@ -451,6 +464,19 @@ func TestNotificationAlertAndHealthRoutesSmoke(t *testing.T) {
 		if resp.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d, want %d; body=%s", target, resp.Code, http.StatusOK, resp.Body.String())
 		}
+	}
+
+	records := performRequest(router, http.MethodGet, "/api/notifications/records", nil, token)
+	var recordsPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(records.Body.Bytes(), &recordsPayload); err != nil {
+		t.Fatalf("decode notification records: %v", err)
+	}
+	if recordsPayload.Data.Total == 0 {
+		t.Fatalf("notification records total = 0, want alert event dispatch record")
 	}
 }
 
