@@ -76,6 +76,9 @@ func (s *Service) InitAdmin(ctx context.Context) (*model.User, error) {
 		return nil, err
 	}
 	if count > 0 {
+		if _, err := EnsurePermissions(ctx, s.db); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 
@@ -140,18 +143,70 @@ func seedPermissions(ctx context.Context, tx *gorm.DB) ([]model.Permission, erro
 		{Name: "Terminal Open", Code: "terminal.open", Resource: "terminal", Action: "open"},
 		{Name: "Docker View", Code: "docker.view", Resource: "docker", Action: "view"},
 		{Name: "Docker Manage", Code: "docker.manage", Resource: "docker", Action: "manage"},
+		{Name: "Nginx View", Code: "nginx.view", Resource: "nginx", Action: "view"},
+		{Name: "Nginx Manage", Code: "nginx.manage", Resource: "nginx", Action: "manage"},
 		{Name: "Tasks View", Code: "tasks.view", Resource: "tasks", Action: "view"},
 		{Name: "Audits View", Code: "audits.view", Resource: "audits", Action: "view"},
+		{Name: "Notifications View", Code: "notifications.view", Resource: "notifications", Action: "view"},
+		{Name: "Notifications Manage", Code: "notifications.manage", Resource: "notifications", Action: "manage"},
+		{Name: "Notifications Test", Code: "notifications.test", Resource: "notifications", Action: "test"},
+		{Name: "Alerts View", Code: "alerts.view", Resource: "alerts", Action: "view"},
+		{Name: "Alerts Manage", Code: "alerts.manage", Resource: "alerts", Action: "manage"},
+		{Name: "Alerts Ack", Code: "alerts.ack", Resource: "alerts", Action: "ack"},
+		{Name: "Healthchecks View", Code: "healthchecks.view", Resource: "healthchecks", Action: "view"},
+		{Name: "Healthchecks Run", Code: "healthchecks.run", Resource: "healthchecks", Action: "run"},
 	}
 	permissions := make([]model.Permission, 0, len(definitions))
 	for _, definition := range definitions {
-		permission := definition
-		if err := tx.WithContext(ctx).Where("code = ?", definition.Code).FirstOrCreate(&permission, definition).Error; err != nil {
+		permission, err := ensurePermission(ctx, tx, definition)
+		if err != nil {
 			return nil, err
 		}
 		permissions = append(permissions, permission)
 	}
 	return permissions, nil
+}
+
+func ensurePermission(ctx context.Context, tx *gorm.DB, definition model.Permission) (model.Permission, error) {
+	var permission model.Permission
+	err := tx.WithContext(ctx).Unscoped().Where("code = ?", definition.Code).First(&permission).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		permission = definition
+		return permission, tx.WithContext(ctx).Create(&permission).Error
+	}
+	if err != nil {
+		return permission, err
+	}
+
+	updates := map[string]any{
+		"name":        definition.Name,
+		"resource":    definition.Resource,
+		"action":      definition.Action,
+		"description": definition.Description,
+		"deleted_at":  nil,
+	}
+	if err := tx.WithContext(ctx).Unscoped().Model(&permission).Updates(updates).Error; err != nil {
+		return permission, err
+	}
+	permission.Name = definition.Name
+	permission.Resource = definition.Resource
+	permission.Action = definition.Action
+	permission.Description = definition.Description
+	permission.DeletedAt.Valid = false
+	return permission, nil
+}
+
+func EnsurePermissions(ctx context.Context, db *gorm.DB) ([]model.Permission, error) {
+	var permissions []model.Permission
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		items, err := seedPermissions(ctx, tx)
+		if err != nil {
+			return err
+		}
+		permissions = items
+		return nil
+	})
+	return permissions, err
 }
 
 func (s *Service) Login(ctx context.Context, username, password string) (*LoginResult, error) {

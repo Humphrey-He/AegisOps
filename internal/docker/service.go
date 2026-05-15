@@ -186,6 +186,17 @@ func (s *Service) DeleteNode(ctx context.Context, id string) error {
 }
 
 func (s *Service) TestConnection(ctx context.Context, id string) error {
+	node, err := s.GetNode(ctx, id)
+	if err != nil {
+		return err
+	}
+	if isMockEndpoint(node.Endpoint) {
+		now := time.Now().UTC()
+		return s.db.WithContext(ctx).Model(&model.DockerNode{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":       model.DockerNodeStatusOnline,
+			"last_test_at": &now,
+		}).Error
+	}
 	cli, err := s.clientForNode(ctx, id)
 	now := time.Now().UTC()
 	status := model.DockerNodeStatusOnline
@@ -220,6 +231,13 @@ func (s *Service) TestConnectionTask(ctx context.Context, id, operatorID string)
 }
 
 func (s *Service) ListContainers(ctx context.Context, nodeID string, all bool) ([]dockertypes.Container, error) {
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if isMockEndpoint(node.Endpoint) {
+		return s.listMockContainers(ctx, nodeID, all)
+	}
 	cli, err := s.clientForNode(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -229,6 +247,17 @@ func (s *Service) ListContainers(ctx context.Context, nodeID string, all bool) (
 }
 
 func (s *Service) ContainerLogs(ctx context.Context, nodeID, containerID string, tail string) (string, error) {
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return "", err
+	}
+	if isMockEndpoint(node.Endpoint) {
+		var item model.MockDockerContainer
+		if err := s.db.WithContext(ctx).First(&item, "id = ? AND node_id = ?", containerID, nodeID).Error; err != nil {
+			return "", err
+		}
+		return item.Logs, nil
+	}
 	cli, err := s.clientForNode(ctx, nodeID)
 	if err != nil {
 		return "", err
@@ -259,6 +288,9 @@ func (s *Service) ContainerLogs(ctx context.Context, nodeID, containerID string,
 }
 
 func (s *Service) StartContainer(ctx context.Context, nodeID, containerID string) error {
+	if ok, err := s.updateMockContainerStatus(ctx, nodeID, containerID, model.MockDockerContainerRunning); ok || err != nil {
+		return err
+	}
 	cli, err := s.clientForNode(ctx, nodeID)
 	if err != nil {
 		return err
@@ -272,6 +304,9 @@ func (s *Service) StartContainerTask(ctx context.Context, nodeID, containerID, o
 }
 
 func (s *Service) StopContainer(ctx context.Context, nodeID, containerID string) error {
+	if ok, err := s.updateMockContainerStatus(ctx, nodeID, containerID, model.MockDockerContainerExited); ok || err != nil {
+		return err
+	}
 	cli, err := s.clientForNode(ctx, nodeID)
 	if err != nil {
 		return err
@@ -285,6 +320,9 @@ func (s *Service) StopContainerTask(ctx context.Context, nodeID, containerID, op
 }
 
 func (s *Service) RestartContainer(ctx context.Context, nodeID, containerID string) error {
+	if ok, err := s.restartMockContainer(ctx, nodeID, containerID); ok || err != nil {
+		return err
+	}
 	cli, err := s.clientForNode(ctx, nodeID)
 	if err != nil {
 		return err
@@ -339,6 +377,13 @@ func (s *Service) DeployContainer(ctx context.Context, req DeployRequest) (*Depl
 	}
 	if err := s.ValidateDeploy(ctx, req); err != nil {
 		return nil, err
+	}
+	node, err := s.GetNode(ctx, req.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	if isMockEndpoint(node.Endpoint) {
+		return s.deployMockContainer(ctx, req)
 	}
 	cli, err := s.clientForNode(ctx, req.NodeID)
 	if err != nil {
@@ -412,6 +457,25 @@ func (s *Service) ValidateDeploy(ctx context.Context, req DeployRequest) error {
 	}
 	if strings.TrimSpace(req.Image) == "" {
 		return fmt.Errorf("service image is required")
+	}
+	node, err := s.GetNode(ctx, req.NodeID)
+	if err != nil {
+		return err
+	}
+	if isMockEndpoint(node.Endpoint) {
+		if _, _, err := parsePorts(req.PortsJSON); err != nil {
+			return err
+		}
+		if _, err := parseEnvs(req.EnvsJSON); err != nil {
+			return err
+		}
+		if _, err := parseMounts(req.MountsJSON); err != nil {
+			return err
+		}
+		if _, err := parseResources(req.ResourcesJSON); err != nil {
+			return err
+		}
+		return nil
 	}
 	cli, err := s.clientForNode(ctx, req.NodeID)
 	if err != nil {
@@ -719,4 +783,136 @@ func parseMemoryBytes(raw string) (int64, error) {
 		return 0, fmt.Errorf("parse memory: %w", err)
 	}
 	return int64(amount * float64(multiplier)), nil
+}
+
+func isMockEndpoint(endpoint string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(endpoint)), "mock://")
+}
+
+func (s *Service) listMockContainers(ctx context.Context, nodeID string, all bool) ([]dockertypes.Container, error) {
+	var items []model.MockDockerContainer
+	query := s.db.WithContext(ctx).Where("node_id = ?", nodeID)
+	if !all {
+		query = query.Where("status = ?", model.MockDockerContainerRunning)
+	}
+	if err := query.Order("created_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	containers := make([]dockertypes.Container, 0, len(items))
+	for _, item := range items {
+		containers = append(containers, mockContainerToDocker(item))
+	}
+	return containers, nil
+}
+
+func mockContainerToDocker(item model.MockDockerContainer) dockertypes.Container {
+	names := []string{}
+	if item.Name != "" {
+		names = []string{"/" + item.Name}
+	}
+	return dockertypes.Container{
+		ID:      item.ID,
+		Names:   names,
+		Image:   item.Image,
+		ImageID: "mock:" + item.ID,
+		Command: "mock workload",
+		Created: item.CreatedAt.Unix(),
+		State:   string(item.Status),
+		Status:  mockContainerStatusText(item),
+		Labels: map[string]string{
+			"aegisops.mock":       "true",
+			"aegisops.service.id": item.ServiceID,
+		},
+	}
+}
+
+func mockContainerStatusText(item model.MockDockerContainer) string {
+	switch item.Status {
+	case model.MockDockerContainerRunning:
+		return "Up " + time.Since(item.UpdatedAt).Round(time.Second).String()
+	case model.MockDockerContainerPaused:
+		return "Paused"
+	default:
+		return "Exited"
+	}
+}
+
+func (s *Service) updateMockContainerStatus(ctx context.Context, nodeID, containerID string, status model.MockDockerContainerStatus) (bool, error) {
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return false, err
+	}
+	if !isMockEndpoint(node.Endpoint) {
+		return false, nil
+	}
+	var item model.MockDockerContainer
+	if err := s.db.WithContext(ctx).First(&item, "id = ? AND node_id = ?", containerID, nodeID).Error; err != nil {
+		return true, err
+	}
+	item.Status = status
+	item.Logs = appendMockLog(item.Logs, fmt.Sprintf("container %s set to %s", item.Name, status))
+	return true, s.db.WithContext(ctx).Save(&item).Error
+}
+
+func (s *Service) restartMockContainer(ctx context.Context, nodeID, containerID string) (bool, error) {
+	node, err := s.GetNode(ctx, nodeID)
+	if err != nil {
+		return false, err
+	}
+	if !isMockEndpoint(node.Endpoint) {
+		return false, nil
+	}
+	var item model.MockDockerContainer
+	if err := s.db.WithContext(ctx).First(&item, "id = ? AND node_id = ?", containerID, nodeID).Error; err != nil {
+		return true, err
+	}
+	item.Status = model.MockDockerContainerRunning
+	item.RestartCount++
+	item.Logs = appendMockLog(item.Logs, fmt.Sprintf("container %s restarted", item.Name))
+	return true, s.db.WithContext(ctx).Save(&item).Error
+}
+
+func (s *Service) deployMockContainer(ctx context.Context, req DeployRequest) (*DeployResult, error) {
+	name := firstNonEmpty(req.ContainerName, req.ServiceCode)
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("container name is required")
+	}
+	image := req.Image
+	if req.ImageTag != "" && !strings.Contains(lastImageSegment(req.Image), ":") {
+		image = req.Image + ":" + req.ImageTag
+	}
+	containerID := "mock-" + uuid.NewString()
+	now := time.Now().UTC()
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("node_id = ? AND name = ?", req.NodeID, name).Delete(&model.MockDockerContainer{}).Error; err != nil {
+			return err
+		}
+		item := model.MockDockerContainer{
+			ID:        containerID,
+			NodeID:    req.NodeID,
+			ServiceID: req.ServiceID,
+			Name:      name,
+			Image:     image,
+			Status:    model.MockDockerContainerRunning,
+			Ports:     req.PortsJSON,
+			Logs: strings.Join([]string{
+				fmt.Sprintf("[%s] INFO pulling image %s", now.Format(time.RFC3339), image),
+				fmt.Sprintf("[%s] INFO created mock container %s", now.Format(time.RFC3339), name),
+				fmt.Sprintf("[%s] INFO container is running on mock docker node", now.Format(time.RFC3339)),
+			}, "\n"),
+		}
+		return tx.Create(&item).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &DeployResult{ContainerID: containerID, Image: image}, nil
+}
+
+func appendMockLog(logs, message string) string {
+	line := fmt.Sprintf("[%s] INFO %s", time.Now().UTC().Format(time.RFC3339), message)
+	if strings.TrimSpace(logs) == "" {
+		return line
+	}
+	return logs + "\n" + line
 }

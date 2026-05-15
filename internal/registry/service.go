@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
+	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
 
 var (
@@ -28,6 +30,8 @@ type Service struct {
 	db      *gorm.DB
 	secrets *secret.Service
 	client  *http.Client
+	tasks   *tasksvc.Service
+	taskMu  sync.Mutex
 }
 
 type CreateRequest struct {
@@ -71,6 +75,10 @@ func NewService(db *gorm.DB, secrets *secret.Service) *Service {
 		secrets: secrets,
 		client:  &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+func (s *Service) SetTaskService(tasks *tasksvc.Service) {
+	s.tasks = tasks
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Registry, error) {
@@ -186,6 +194,37 @@ func (s *Service) Test(ctx context.Context, id string) error {
 		"last_test_at": &now,
 	}).Error
 	return err
+}
+
+func (s *Service) TestTask(ctx context.Context, id, operatorID string) (string, error) {
+	if s.tasks == nil {
+		return "", s.Test(ctx, id)
+	}
+	s.taskMu.Lock()
+	defer s.taskMu.Unlock()
+	task, err := s.tasks.CreateRunning(ctx, tasksvc.CreateRequest{
+		Type:       "registry.test",
+		Title:      "test registry " + id,
+		TargetType: "registry",
+		TargetID:   id,
+		CreatedBy:  operatorID,
+		Steps: []tasksvc.CreateStepRequest{
+			{Name: "load registry config", SortOrder: 1},
+			{Name: "request registry api", SortOrder: 2},
+			{Name: "record registry status", SortOrder: 3},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	err = s.Test(ctx, id)
+	if err != nil {
+		_, _ = s.tasks.AddLog(ctx, task.ID, "", model.TaskLogLevelError, err.Error())
+		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
+		return task.ID, err
+	}
+	_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusSuccess, "ok", "")
+	return task.ID, nil
 }
 
 func (s *Service) Repositories(ctx context.Context, id string) (*CatalogResponse, error) {

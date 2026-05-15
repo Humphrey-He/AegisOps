@@ -93,13 +93,14 @@ func (h *RegistryHandler) Delete(c *gin.Context) {
 }
 
 func (h *RegistryHandler) Test(c *gin.Context) {
-	if err := h.service.Test(c.Request.Context(), c.Param("id")); err != nil {
+	taskID, err := h.service.TestTask(c.Request.Context(), c.Param("id"), OperatorID(c))
+	if err != nil {
 		_ = h.audit.RecordGin(c, audit.Entry{Action: "registry.test", ResourceType: "registry", ResourceID: c.Param("id"), Result: model.AuditResultFailure, Message: err.Error()})
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	_ = h.audit.RecordGin(c, audit.Entry{Action: "registry.test", ResourceType: "registry", ResourceID: c.Param("id"), Result: model.AuditResultSuccess})
-	OK(c, gin.H{"connected": true})
+	OK(c, gin.H{"connected": true, "taskId": taskID})
 }
 
 func (h *RegistryHandler) Repositories(c *gin.Context) {

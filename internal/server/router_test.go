@@ -254,7 +254,7 @@ func TestServiceReleaseSmoke(t *testing.T) {
 	if err := json.Unmarshal(taskResp.Body.Bytes(), &taskPayload); err != nil {
 		t.Fatalf("decode task response: %v; body=%s", err, taskResp.Body.String())
 	}
-	if taskPayload.Data.Status != model.TaskStatusSuccess || len(taskPayload.Data.Steps) != 4 {
+	if taskPayload.Data.Status != model.TaskStatusSuccess || len(taskPayload.Data.Steps) != 5 {
 		t.Fatalf("unexpected release task: status=%s steps=%d", taskPayload.Data.Status, len(taskPayload.Data.Steps))
 	}
 	for _, step := range taskPayload.Data.Steps {
@@ -310,6 +310,146 @@ func TestSystemRoutesRequireRBAC(t *testing.T) {
 		resp := performRequest(router, http.MethodGet, target, nil, loginPayload.Data.Tokens.AccessToken)
 		if resp.Code != http.StatusForbidden {
 			t.Fatalf("GET %s status = %d, want %d; body=%s", target, resp.Code, http.StatusForbidden, resp.Body.String())
+		}
+	}
+}
+
+func TestPermissionsEndpointBackfillsMissingSeedPermissions(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	missingCodes := []string{"dashboard.view", "hosts.view", "audits.view", "users.view"}
+	if err := database.Where("permission_id IN (?)",
+		database.Model(&model.Permission{}).Select("id").Where("code IN ?", missingCodes),
+	).Delete(&model.RolePermission{}).Error; err != nil {
+		t.Fatalf("delete role permissions for missing codes: %v", err)
+	}
+	if err := database.Where("code IN ?", missingCodes).Delete(&model.Permission{}).Error; err != nil {
+		t.Fatalf("delete missing seed permissions: %v", err)
+	}
+
+	resp := performRequest(router, http.MethodGet, "/api/permissions", nil, token)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /api/permissions status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			Items []struct {
+				Code string `json:"code"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode permissions response: %v; body=%s", err, resp.Body.String())
+	}
+	returned := make(map[string]bool, len(payload.Data.Items))
+	for _, permission := range payload.Data.Items {
+		returned[permission.Code] = true
+	}
+	for _, code := range missingCodes {
+		if !returned[code] {
+			t.Fatalf("GET /api/permissions did not backfill %q; returned=%v", code, returned)
+		}
+	}
+}
+
+func TestNotificationAlertAndHealthRoutesSmoke(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	createChannel := performRequest(router, http.MethodPost, "/api/notifications/channels", []byte(`{
+		"name":"Ops Telegram",
+		"type":"telegram",
+		"enabled":true,
+		"language":"en-US",
+		"config":"{}",
+		"defaultTarget":"ops"
+	}`), token)
+	if createChannel.Code != http.StatusCreated {
+		t.Fatalf("POST /api/notifications/channels status = %d, want %d; body=%s", createChannel.Code, http.StatusCreated, createChannel.Body.String())
+	}
+	var channelPayload struct {
+		Data struct {
+			ID       string `json:"id"`
+			Language string `json:"language"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createChannel.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatalf("decode notification channel: %v", err)
+	}
+	if channelPayload.Data.Language != "en-US" {
+		t.Fatalf("notification channel language = %q, want en-US", channelPayload.Data.Language)
+	}
+	testChannel := performRequest(router, http.MethodPost, "/api/notifications/channels/"+channelPayload.Data.ID+"/test", nil, token)
+	if testChannel.Code != http.StatusOK {
+		t.Fatalf("POST /api/notifications/channels/:id/test status = %d, want %d; body=%s", testChannel.Code, http.StatusOK, testChannel.Body.String())
+	}
+
+	createRule := performRequest(router, http.MethodPost, "/api/alert-rules", []byte(`{
+		"name":"Service health failed",
+		"eventType":"service_health_check_failed",
+		"resourceType":"service",
+		"channelIds":"`+channelPayload.Data.ID+`",
+		"language":"zh-CN",
+		"enabled":true
+	}`), token)
+	if createRule.Code != http.StatusCreated {
+		t.Fatalf("POST /api/alert-rules status = %d, want %d; body=%s", createRule.Code, http.StatusCreated, createRule.Body.String())
+	}
+	var rulePayload struct {
+		Data struct {
+			Language string `json:"language"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRule.Body.Bytes(), &rulePayload); err != nil {
+		t.Fatalf("decode alert rule: %v", err)
+	}
+	if rulePayload.Data.Language != "zh-CN" {
+		t.Fatalf("alert rule language = %q, want zh-CN", rulePayload.Data.Language)
+	}
+
+	for _, target := range []string{
+		"/api/notifications/channels",
+		"/api/notifications/records",
+		"/api/alert-rules",
+		"/api/alerts/events",
+	} {
+		resp := performRequest(router, http.MethodGet, target, nil, token)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want %d; body=%s", target, resp.Code, http.StatusOK, resp.Body.String())
 		}
 	}
 }

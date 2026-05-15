@@ -5,6 +5,7 @@ data/
 *.db-shm
 *.db-wal
 tmp/
+bin/
 dist/
 node_modules/
 *.tsbuildinfo

@@ -90,11 +90,12 @@ func (h *HostHandler) Delete(c *gin.Context) {
 }
 
 func (h *HostHandler) TestSSH(c *gin.Context) {
-	if err := h.service.TestSSH(c.Request.Context(), c.Param("id")); err != nil {
+	taskID, err := h.service.TestSSHTask(c.Request.Context(), c.Param("id"), OperatorID(c))
+	if err != nil {
 		_ = h.audit.RecordGin(c, audit.Entry{Action: "host.test_ssh", ResourceType: "host", ResourceID: c.Param("id"), Result: model.AuditResultFailure, Message: err.Error()})
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	_ = h.audit.RecordGin(c, audit.Entry{Action: "host.test_ssh", ResourceType: "host", ResourceID: c.Param("id"), Result: model.AuditResultSuccess})
-	OK(c, gin.H{"connected": true})
+	OK(c, gin.H{"connected": true, "taskId": taskID})
 }

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
+	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
@@ -27,6 +28,7 @@ type Service struct {
 	db        *gorm.DB
 	tasks     *tasksvc.Service
 	executor  ReleaseExecutor
+	health    *healthsvc.Service
 	releaseMu sync.Mutex
 }
 
@@ -174,6 +176,10 @@ func NewService(db *gorm.DB, tasks *tasksvc.Service, executor ReleaseExecutor) *
 		executor = NoopReleaseExecutor{}
 	}
 	return &Service{db: db, tasks: tasks, executor: executor}
+}
+
+func (s *Service) SetHealthCheckService(health *healthsvc.Service) {
+	s.health = health
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.ServiceDefinition, error) {
@@ -403,6 +409,7 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 			{Name: "resolve image version", SortOrder: 2},
 			{Name: "prepare docker execution", SortOrder: 3},
 			{Name: "record service state", SortOrder: 4},
+			{Name: "run post-release health check", SortOrder: 5},
 		},
 	})
 	if err != nil {
@@ -556,6 +563,22 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
 		return nil, err
 	}
+	if err := runStep("run post-release health check", func() error {
+		if s.health == nil {
+			_, _ = s.tasks.AddLog(ctx, task.ID, stepsByName["run post-release health check"], model.TaskLogLevelInfo, "health check service is not configured; skipped")
+			return nil
+		}
+		check, err := s.health.RunServiceCheck(ctx, *service, release, task.ID)
+		if check != nil {
+			_, _ = s.tasks.AddLog(ctx, task.ID, stepsByName["run post-release health check"], model.TaskLogLevelInfo, check.Output)
+		}
+		return err
+	}); err != nil {
+		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
+		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
+		_ = s.markLatestInstanceFailed(ctx, service.ID, err.Error())
+		return nil, err
+	}
 	_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusSuccess, release.Message, "")
 	return &ReleaseResult{TaskID: task.ID, ReleaseID: release.ID}, nil
 }
@@ -594,6 +617,12 @@ func (s *Service) recordFailedInstance(ctx context.Context, serviceID, versionID
 		LastError:    message,
 	}
 	return s.db.WithContext(ctx).Create(&instance).Error
+}
+
+func (s *Service) markLatestInstanceFailed(ctx context.Context, serviceID, message string) error {
+	return s.db.WithContext(ctx).Model(&model.ServiceInstance{}).
+		Where("service_id = ? AND status = ?", serviceID, model.ServiceInstanceStatusRunning).
+		Updates(map[string]interface{}{"status": model.ServiceInstanceStatusFailed, "last_error": message}).Error
 }
 
 func (s *Service) getVersion(ctx context.Context, serviceID, versionID string) (*model.ServiceVersion, error) {

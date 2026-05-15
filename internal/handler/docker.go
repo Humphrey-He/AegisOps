@@ -2,7 +2,11 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
+	dockertypes "github.com/docker/docker/api/types"
 	"github.com/gin-gonic/gin"
 
 	"github.com/Humphrey-He/AegisOps/internal/audit"
@@ -10,6 +14,17 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/rbac"
 )
+
+type ContainerItem struct {
+	ID           string   `json:"id"`
+	NodeID       string   `json:"nodeId"`
+	Name         string   `json:"name"`
+	Image        string   `json:"image"`
+	Status       string   `json:"status"`
+	Ports        []string `json:"ports"`
+	RestartCount int      `json:"restartCount"`
+	CreatedAt    string   `json:"createdAt"`
+}
 
 type DockerHandler struct {
 	service *dockersvc.Service
@@ -111,7 +126,46 @@ func (h *DockerHandler) ListContainers(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	OK(c, items)
+	result := make([]ContainerItem, 0, len(items))
+	for _, item := range items {
+		name := item.ID
+		if len(item.Names) > 0 {
+			name = strings.TrimPrefix(item.Names[0], "/")
+		}
+		result = append(result, ContainerItem{
+			ID:        item.ID,
+			NodeID:    c.Param("id"),
+			Name:      name,
+			Image:     item.Image,
+			Status:    item.State,
+			Ports:     formatContainerPorts(item.Ports),
+			CreatedAt: unixTimeString(item.Created),
+		})
+	}
+	OK(c, result)
+}
+
+func formatContainerPorts(ports []dockertypes.Port) []string {
+	result := make([]string, 0, len(ports))
+	for _, port := range ports {
+		if port.PublicPort > 0 {
+			result = append(result, strings.ToUpper(port.Type)+":"+port.IP+":"+formatUint16(port.PublicPort)+"->"+formatUint16(port.PrivatePort))
+			continue
+		}
+		result = append(result, strings.ToUpper(port.Type)+":"+formatUint16(port.PrivatePort))
+	}
+	return result
+}
+
+func formatUint16(value uint16) string {
+	return strconv.FormatUint(uint64(value), 10)
+}
+
+func unixTimeString(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return time.Unix(value, 0).UTC().Format(time.RFC3339)
 }
 
 func (h *DockerHandler) ContainerLogs(c *gin.Context) {

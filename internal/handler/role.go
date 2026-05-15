@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/Humphrey-He/AegisOps/internal/audit"
+	authsvc "github.com/Humphrey-He/AegisOps/internal/auth"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -143,12 +144,16 @@ func (h *RoleHandler) Delete(c *gin.Context) {
 }
 
 func (h *RoleHandler) ListPermissions(c *gin.Context) {
+	if _, err := authsvc.EnsurePermissions(c.Request.Context(), h.db); err != nil {
+		writeError(c, err)
+		return
+	}
 	var permissions []model.Permission
 	if err := h.db.WithContext(c.Request.Context()).Order("resource asc, action asc, id asc").Find(&permissions).Error; err != nil {
 		writeError(c, err)
 		return
 	}
-	response.OK(c, permissions)
+	response.OK(c, gin.H{"items": permissions})
 }
 
 func (h *RoleHandler) CreatePermission(c *gin.Context) {

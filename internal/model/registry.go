@@ -54,5 +54,14 @@ func AllModels() []any {
 		&ServiceVersion{},
 		&ServiceInstance{},
 		&ServiceReleaseRecord{},
+		&NginxNode{},
+		&NginxConfigVersion{},
+		&MockDockerContainer{},
+		&NotificationChannel{},
+		&AlertRule{},
+		&AlertEvent{},
+		&NotificationRecord{},
+		&ServiceHealthCheck{},
+		&HostAvailabilityCheck{},
 	}
 }

@@ -4,19 +4,25 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 
+	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
+	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
 
 type Service struct {
 	db      *gorm.DB
 	secrets *secret.Service
+	tasks   *tasksvc.Service
+	health  *healthsvc.Service
+	taskMu  sync.Mutex
 	timeout time.Duration
 }
 
@@ -44,6 +50,14 @@ type UpdateRequest struct {
 
 func NewService(db *gorm.DB, secrets *secret.Service) *Service {
 	return &Service{db: db, secrets: secrets, timeout: 8 * time.Second}
+}
+
+func (s *Service) SetTaskService(tasks *tasksvc.Service) {
+	s.tasks = tasks
+}
+
+func (s *Service) SetHealthCheckService(health *healthsvc.Service) {
+	s.health = health
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Host, error) {
@@ -160,6 +174,41 @@ func (s *Service) TestSSH(ctx context.Context, id string) error {
 		return err
 	}
 	return client.Close()
+}
+
+func (s *Service) TestSSHTask(ctx context.Context, id, operatorID string) (string, error) {
+	if s.tasks == nil {
+		return "", s.TestSSH(ctx, id)
+	}
+	s.taskMu.Lock()
+	defer s.taskMu.Unlock()
+	task, err := s.tasks.CreateRunning(ctx, tasksvc.CreateRequest{
+		Type:       "host.ssh.test",
+		Title:      "test host ssh " + id,
+		TargetType: "host",
+		TargetID:   id,
+		CreatedBy:  operatorID,
+		Steps: []tasksvc.CreateStepRequest{
+			{Name: "load host credential", SortOrder: 1},
+			{Name: "connect ssh", SortOrder: 2},
+			{Name: "record host status", SortOrder: 3},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	started := time.Now().UTC()
+	err = s.TestSSH(ctx, id)
+	if s.health != nil {
+		_, _ = s.health.RecordHostAvailability(ctx, id, task.ID, started, err)
+	}
+	if err != nil {
+		_, _ = s.tasks.AddLog(ctx, task.ID, "", model.TaskLogLevelError, err.Error())
+		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
+		return task.ID, err
+	}
+	_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusSuccess, "ok", "")
+	return task.ID, nil
 }
 
 func sshAuthMethod(secretType model.SecretType, value string) (ssh.AuthMethod, error) {
