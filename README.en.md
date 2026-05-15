@@ -2,37 +2,38 @@
 
 [中文](./README.md) | [日本語](./README.ja-JP.md) | [English](./README.en.md)
 
-AegisOps is a lightweight DevOps control plane MVP. The current repository includes:
+AegisOps is a DevOps platform focused on a lightweight operations control plane, delivery workflows, and stability management. The repository currently includes:
 
-- a Go + Gin + SQLite + GORM + zap backend
+- a Go + Gin + SQLite + GORM + zap backend API and task execution core
 - a React + TypeScript + Vite frontend console
-- phase-one review notes, phase-two roadmap, and supporting Chinese documentation
+- Chinese-first product, development, review, phase-two, and release documents
 
 GitHub should display the Chinese `README.md` by default. This file is the English counterpart.
 
 ## Project Overview
 
-The current project strategy is to finish the phase-one MVP security foundation and basic operations loop first, then move into phase two with a complete service delivery loop.
+Based on the current implementation, AegisOps already provides a runnable local operations platform baseline:
 
-Main capabilities already present in the repository:
+- identity and access: admin bootstrap, authentication, users, roles, RBAC, and audit logs
+- assets and secrets: host management, SSH connectivity tests, encrypted secret storage, and masked responses
+- operations execution: tasks, task steps, task logs, and a web terminal
+- container and delivery workflows: Docker nodes, image registries, service definitions, release, upgrade, and rollback
+- stability management: notification channels, alert rules, alert events, and host/service health checks
+- release loop features: post-release probing, rollback suggestions, and Nginx node/config rollback support
+- platform support: export, backup, scheduler APIs, and demo data seeding in development environments
 
-- authentication and default administrator bootstrap
-- user, role, and permission base models
-- secret storage with masked responses
-- audit log foundations
-- host CRUD and SSH connectivity test
-- task, task step, and task log models
-- Docker node CRUD and basic container operations
-- real frontend routes and basic live API integration
+The frontend console already includes major pages for dashboard, hosts, secrets, Docker, Nginx, registries, services, tasks, audits, alerts, notifications, users, roles, terminal, login, and admin setup.
 
 ## Directory Layout
 
 ```text
 cmd/         backend entrypoint
 configs/     configuration files
-docs/        Chinese project documents
+data/        SQLite data and local runtime artifacts
+docs/        Chinese project documents and plans
 frontend/    frontend console
 internal/    backend business implementation
+logs/        local runtime logs
 pkg/         shared packages
 ```
 
@@ -69,7 +70,9 @@ username: admin
 password: admin123456
 ```
 
-Change these values before using the service outside local development.
+Change the default administrator password, JWT secret, and secret key before using the service beyond local development.
+
+When `app.env` is `dev`, `development`, or `test`, the backend seeds demo registry, Docker node, service, and instance data for local walkthroughs of release, rollback, and health-check flows.
 
 ## Frontend Quick Start
 
@@ -90,14 +93,23 @@ Default URL:
 
 - [http://localhost:4173](http://localhost:4173)
 
-In the current development setup, the frontend uses the real backend by default and proxies `/api` to `http://127.0.0.1:8080`.
+In development mode, the frontend uses the real backend by default and proxies `/api` to `http://127.0.0.1:8080`.
+
+For a production-style preview:
+
+```powershell
+Set-Location frontend
+npm run build
+npm run preview
+```
 
 ## Smoke Checks
 
-Backend health check:
+Backend health checks:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/healthz
+Invoke-RestMethod http://127.0.0.1:8080/readyz
 ```
 
 Login example:
@@ -121,7 +133,7 @@ Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" }
 ```
 
-## Tests
+## Tests and Acceptance
 
 Run backend tests:
 
@@ -136,6 +148,8 @@ Run a frontend build check:
 Set-Location frontend
 npm run build
 ```
+
+Treat both checks as the minimum validation before each commit. For formal release acceptance, use [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md).
 
 ## Environment Overrides
 
@@ -153,14 +167,20 @@ $env:AEGISOPS_ADMIN_PASSWORD = "replace-me-too"
 Recommended core documents:
 
 - [AegisOps Phase-One MVP Roadmap](./docs/AegisOps一期MVP开发路线.md)
+- [AegisOps Phase-One Development Handbook](./docs/AegisOps一期开发手册（真实经验与排查方法）.md)
 - [AegisOps Stage Review (Phase-One Completion and Phase-Two Recommendations)](./docs/AegisOps阶段审查报告（一期完成度与二期建议）.md)
+- [AegisOps Formal Release Acceptance Checklist](./docs/AegisOps正式Release验收清单.md)
 - [AegisOps Phase-Two Frontend and Backend Roadmap](./docs/AegisOps二期前后端开发路线.md)
-- [AegisOps Current Integration Blockers](./docs/AegisOps当前联调阻塞清单.md)
+- [AegisOps Phase-Two Plan: Alerts and Health-Check Loop](./docs/AegisOps二期专项规划：通知告警与健康检查闭环.md)
+- [AegisOps Phase-Two Plan: Export, Backup, and Troubleshooting Pack](./docs/AegisOps二期专项规划：导出、备份与故障排查包.md)
+- [AegisOps Phase-Two Plan: Fine-Grained Permissions, Secret Management, and Scheduling](./docs/AegisOps二期专项规划：权限细粒度、密钥管理与任务调度.md)
 
 ## Current Stage
 
-The project is currently best described as:
+This repository is no longer just a scaffold. Backend APIs, frontend business pages, demo data, and the basic integration loop are already in place, so local development, demos, and API integration can proceed directly.
 
-- phase-one core implementation mostly in place
-- phase-one closure still incomplete
-- phase-two scope is clear, but phase-one closure should be finished before fully expanding into phase two
+Its current status is better described as:
+
+- phase-one core capabilities mostly complete
+- phase-one closure, production readiness checks, and several focused enhancements are still ongoing
+- formal release readiness should be judged against [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md)

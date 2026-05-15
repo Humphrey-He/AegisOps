@@ -2,37 +2,38 @@
 
 [中文](./README.md) | [日本語](./README.ja-JP.md) | [English](./README.en.md)
 
-AegisOps は、軽量な運用コントロールプレーンを目指した DevOps プラットフォーム MVP です。現在のリポジトリには以下が含まれます。
+AegisOps は、軽量な運用コントロールプレーン、デリバリー、安定性管理に焦点を当てた DevOps プラットフォームです。現在のリポジトリには以下が含まれます。
 
-- Go + Gin + SQLite + GORM + zap によるバックエンド
+- Go + Gin + SQLite + GORM + zap によるバックエンド API とタスク実行基盤
 - React + TypeScript + Vite によるフロントエンドコンソール
-- 第一期レビュー、第二期ロードマップ、および中国語ドキュメント
+- 中国語を優先した製品、開発、レビュー、第二期計画、Release 文書
 
 GitHub では中国語の `README.md` を既定表示とし、本ファイルは日本語版の対応ドキュメントです。
 
 ## プロジェクト概要
 
-本プロジェクトは、まず第一期 MVP の安全基盤と基本的な運用クローズドループを完成させ、その後第二期として「サービス配布クローズドループ」を構築する方針です。
+現在の実装状況に基づくと、AegisOps はローカルで実行可能な運用プラットフォームの土台をすでに備えています。
 
-現在実装済みの主な機能：
+- 認証と権限: 管理者初期化、ログイン認証、ユーザー、ロール、RBAC、監査ログ
+- 資産とシークレット: ホスト管理、SSH 接続テスト、暗号化 Secret 保存、マスク付き返却
+- 運用実行: タスク、タスクステップ、タスクログ、Web ターミナル
+- コンテナとデリバリー: Docker ノード、イメージ Registry、サービス定義、リリース、アップグレード、ロールバック
+- 安定性管理: 通知チャネル、アラートルール、アラートイベント、ホスト/サービスのヘルスチェック
+- リリース閉ループ: リリース後の自動疎通確認、ロールバック提案、Nginx ノード管理と設定ロールバック
+- プラットフォーム支援: エクスポート、バックアップ、スケジューラ API、開発環境向け Demo データ投入
 
-- 認証と既定管理者の初期化
-- ユーザー、ロール、権限の基本モデル
-- Secret 保存とマスク付き返却
-- 監査ログの基礎機能
-- ホスト CRUD と SSH 接続テスト
-- タスク、タスクステップ、タスクログのモデル
-- Docker ノード CRUD と基本的なコンテナ操作
-- フロントエンドの実ルーティングと基本的な API 連携
+フロントエンドでは、ダッシュボード、ホスト、Secret、Docker、Nginx、Registry、サービス、タスク、監査、アラート、通知、ユーザー、ロール、ターミナル、ログイン、管理者初期化などの主要ページが利用できます。
 
 ## ディレクトリ構成
 
 ```text
 cmd/         バックエンド起動入口
 configs/     設定ファイル
-docs/        中国語ドキュメント
+data/        SQLite データとローカル実行生成物
+docs/        中国語のプロジェクト文書と計画
 frontend/    フロントエンドコンソール
 internal/    バックエンド業務実装
+logs/        ローカル実行ログ
 pkg/         共通パッケージ
 ```
 
@@ -69,7 +70,9 @@ username: admin
 password: admin123456
 ```
 
-本番または外部公開環境では必ず変更してください。
+ローカル開発以外で利用する前に、既定管理者パスワード、JWT Secret、Secret Key を必ず変更してください。
+
+`app.env` が `dev`、`development`、`test` の場合、バックエンドは Demo Registry、Demo Docker ノード、サンプルサービス、インスタンスデータを自動投入し、リリース、ロールバック、ヘルスチェックのローカル検証をしやすくします。
 
 ## フロントエンド起動
 
@@ -90,7 +93,15 @@ npm run dev
 
 - [http://localhost:4173](http://localhost:4173)
 
-現在の開発モードでは、フロントエンドは既定で実バックエンドを使用し、`/api` は `http://127.0.0.1:8080` にプロキシされます。
+開発モードでは、フロントエンドは既定で実バックエンドを利用し、`/api` を `http://127.0.0.1:8080` へプロキシします。
+
+本番相当のプレビューを行う場合：
+
+```powershell
+Set-Location frontend
+npm run build
+npm run preview
+```
 
 ## クイックチェック
 
@@ -98,6 +109,7 @@ npm run dev
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/healthz
+Invoke-RestMethod http://127.0.0.1:8080/readyz
 ```
 
 ログイン例：
@@ -112,7 +124,7 @@ $login = Invoke-RestMethod `
 $login.data.tokens.accessToken
 ```
 
-現在のユーザー取得：
+現在ユーザー取得：
 
 ```powershell
 $token = $login.data.tokens.accessToken
@@ -121,7 +133,7 @@ Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" }
 ```
 
-## テスト
+## テストと受け入れ
 
 バックエンドテスト：
 
@@ -136,6 +148,8 @@ go test ./...
 Set-Location frontend
 npm run build
 ```
+
+この 2 つは各コミット前の最低限の確認として推奨されます。正式 Release の受け入れには [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md) を参照してください。
 
 ## 環境変数による上書き
 
@@ -152,15 +166,21 @@ $env:AEGISOPS_ADMIN_PASSWORD = "replace-me-too"
 
 主要ドキュメント：
 
-- [AegisOps 一期 MVP 開発路线](./docs/AegisOps一期MVP开发路线.md)
+- [AegisOps 一期 MVP 开发路线](./docs/AegisOps一期MVP开发路线.md)
+- [AegisOps 一期开发手册（真实经验与排查方法）](./docs/AegisOps一期开发手册（真实经验与排查方法）.md)
 - [AegisOps 阶段审查报告（一期完成度与二期建议）](./docs/AegisOps阶段审查报告（一期完成度与二期建议）.md)
+- [AegisOps 正式 Release 验收清单](./docs/AegisOps正式Release验收清单.md)
 - [AegisOps 二期前后端开发路线](./docs/AegisOps二期前后端开发路线.md)
-- [AegisOps 当前联调阻塞清单](./docs/AegisOps当前联调阻塞清单.md)
+- [AegisOps 二期专项规划：通知告警与健康检查闭环](./docs/AegisOps二期专项规划：通知告警与健康检查闭环.md)
+- [AegisOps 二期专项规划：导出、备份与故障排查包](./docs/AegisOps二期专项规划：导出、备份与故障排查包.md)
+- [AegisOps 二期专项规划：权限细粒度、密钥管理与任务调度](./docs/AegisOps二期专项规划：权限细粒度、密钥管理与任务调度.md)
 
 ## 現在の段階
 
-現在のプロジェクト状況はおおむね以下の通りです。
+このリポジトリは、もはや単なるスキャフォールドではありません。バックエンド API、フロントエンド業務ページ、Demo データ、基本的な結合ループがすでに揃っているため、ローカル開発、デモ、API 連携を直接進められます。
+
+ただし、現時点では次のように捉えるのが適切です。
 
 - 第一期の主幹機能は概ね完成
-- 第一期の仕上げは未完了
-- 第二期の方向性は明確だが、全面着手前に第一期の収束が推奨される
+- 第一期の収束、運用向け受け入れ確認、いくつかの重点強化は継続中
+- 正式 Release 可否は [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md) を基準に判断するのが適切
