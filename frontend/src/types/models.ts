@@ -3,6 +3,9 @@ export type HostStatus = "HEALTHY" | "UNREACHABLE" | "UNKNOWN" | "TESTING";
 export type DockerNodeStatus = "ONLINE" | "OFFLINE" | "UNKNOWN" | "TESTING";
 export type RegistryAuthType = "NONE" | "BASIC" | "TOKEN";
 export type RegistryStatus = "ONLINE" | "OFFLINE" | "UNKNOWN";
+export type ServiceStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+export type ServiceInstanceStatus = "PENDING" | "RUNNING" | "STOPPED" | "FAILED" | "ROLLBACK";
+export type ServiceReleaseAction = "RELEASE" | "UPGRADE" | "ROLLBACK";
 export type TaskStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELED";
 export type TaskLogLevel = "INFO" | "WARN" | "ERROR";
 export type SecretType = "SSH_PASSWORD" | "SSH_PRIVATE_KEY" | "DOCKER_TLS" | "DOCKER_TOKEN";
@@ -64,6 +67,7 @@ export type DockerNode = {
   name: string;
   endpoint: string;
   tlsEnabled: boolean;
+  secretId?: string;
   status: DockerNodeStatus;
   description?: string;
   lastCheckedAt?: string;
@@ -100,6 +104,106 @@ export type RegistryManifestResult = {
   digest: string;
   contentType: string;
   manifest: unknown;
+};
+
+export type ServicePort = {
+  name: string;
+  containerPort: number;
+  hostPort?: number;
+  protocol?: "TCP" | "UDP";
+};
+
+export type ServiceEnvVar = {
+  key: string;
+  value: string;
+};
+
+export type ServiceMount = {
+  source: string;
+  target: string;
+  readOnly?: boolean;
+};
+
+export type ServiceResourceLimits = {
+  cpu?: string;
+  memory?: string;
+};
+
+export type ServiceTargetType = "DOCKER_NODE";
+
+export type ServiceDefinition = {
+  id: string;
+  name: string;
+  code: string;
+  group: string;
+  tags: string[];
+  description?: string;
+  registryId: string;
+  image: string;
+  defaultTag: string;
+  ports: ServicePort[];
+  envs: ServiceEnvVar[];
+  mounts: ServiceMount[];
+  resourceLimits: ServiceResourceLimits;
+  targetType: ServiceTargetType;
+  targetId: string;
+  status: ServiceStatus;
+  currentVersion: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ServiceVersion = {
+  id: string;
+  serviceId: string;
+  version: string;
+  image: string;
+  imageTag: string;
+  imageDigest: string;
+  config?: unknown;
+  createdBy?: string;
+  createdAt: string;
+};
+
+export type ServiceInstance = {
+  id: string;
+  serviceId: string;
+  versionId: string;
+  version: string;
+  image: string;
+  imageTag: string;
+  dockerNodeId: string;
+  containerId: string;
+  name: string;
+  status: ServiceInstanceStatus;
+  lastError: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ServiceReleaseRecord = {
+  id: string;
+  serviceId: string;
+  taskId: string;
+  action: ServiceReleaseAction;
+  fromVersionId: string;
+  fromVersion: string;
+  targetVersionId: string;
+  targetVersion: string;
+  status: TaskStatus;
+  message: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ServiceReleaseResult = {
+  taskId: string;
+  releaseId: string;
 };
 
 export type ContainerItem = {
@@ -250,6 +354,7 @@ export type DockerNodeInput = {
   name: string;
   endpoint: string;
   tlsEnabled: boolean;
+  secretId?: string;
   description?: string;
 };
 
@@ -260,4 +365,34 @@ export type RegistryInput = {
   authType: RegistryAuthType;
   secretId?: string;
   description?: string;
+};
+
+export type ServiceDefinitionInput = {
+  id?: string;
+  name: string;
+  code: string;
+  group: string;
+  tags: string[];
+  description?: string;
+  registryId: string;
+  image: string;
+  defaultTag: string;
+  ports: ServicePort[];
+  envs: ServiceEnvVar[];
+  mounts: ServiceMount[];
+  resourceLimits: ServiceResourceLimits;
+  targetType: ServiceTargetType;
+  targetId: string;
+  status: ServiceStatus;
+};
+
+export type ServiceReleaseInput = {
+  version: string;
+  imageTag: string;
+  imageDigest?: string;
+  targetId?: string;
+};
+
+export type ServiceRollbackInput = {
+  versionId: string;
 };

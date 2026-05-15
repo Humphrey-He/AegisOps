@@ -1,5 +1,6 @@
 import {
   AuditOutlined,
+  AppstoreOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DesktopOutlined,
@@ -63,6 +64,12 @@ export const navItems: NavItem[] = [
         label: "Registry",
         permission: "registries.view",
       },
+      {
+        key: "/delivery/services",
+        label: "服务定义",
+        icon: <AppstoreOutlined />,
+        permission: "services.view",
+      },
     ],
   },
   {
@@ -101,6 +108,7 @@ export const hiddenNavTitles: Record<string, string> = {
   "/login": "登录",
   "/terminal": "终端",
   "/delivery/registries": "Registry",
+  "/delivery/services": "服务定义",
   "/403": "无权限",
   "/404": "页面不存在",
 };

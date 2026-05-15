@@ -13,6 +13,12 @@ export const queryKeys = {
   registryTags: (registryId: string, repository: string) => ["registryTags", registryId, repository] as const,
   registryManifest: (registryId: string, repository: string, reference: string) =>
     ["registryManifest", registryId, repository, reference] as const,
+  services: (keyword: string, status: string) => ["services", keyword, status] as const,
+  service: (serviceId: string) => ["service", serviceId] as const,
+  serviceInstances: (serviceId: string) => ["serviceInstances", serviceId] as const,
+  serviceReleases: (serviceId: string) => ["serviceReleases", serviceId] as const,
+  serviceHistory: (serviceId: string) => ["serviceHistory", serviceId] as const,
+  serviceVersions: (serviceId: string) => ["serviceVersions", serviceId] as const,
   dockerNodes: ["dockerNodes"] as const,
   dockerNode: (nodeId: string) => ["dockerNode", nodeId] as const,
   containers: (nodeId: string) => ["containers", nodeId] as const,

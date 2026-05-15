@@ -25,10 +25,7 @@ export function TerminalPage() {
   return (
     <PermissionGuard permission="terminal.open" forbiddenPage>
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
-        <PageHeader
-          title="WebSSH 会话"
-          description="这一页先把 xterm.js 接通到前端壳子，后续直接替换成真实 WebSocket。"
-        />
+        <PageHeader title="WebSSH 会话" description="连接后端真实 WebSocket 流，并通过 xterm.js 进行交互。" />
 
         <Card className="page-card" loading={sessionQuery.isLoading}>
           <ConnectionStatus
@@ -43,6 +40,7 @@ export function TerminalPage() {
             title={`${sessionQuery.data.hostName} 终端`}
             lines={sessionQuery.data.welcomeLines}
             status={sessionQuery.data.status}
+            wsUrl={terminalApi.wsUrl(sessionId)}
           />
         ) : null}
       </Space>

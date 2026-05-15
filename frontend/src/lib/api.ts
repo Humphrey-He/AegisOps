@@ -1,5 +1,5 @@
 import { http } from "./http";
-import { USE_MOCK } from "./config";
+import { API_BASE_URL, USE_MOCK } from "./config";
 import { mockService } from "../mocks/service";
 import { useSessionStore } from "../store/sessionStore";
 import type {
@@ -21,6 +21,14 @@ import type {
   RegistryManifestResult,
   RegistryRepositoriesResult,
   RegistryTagsResult,
+  ServiceDefinition,
+  ServiceDefinitionInput,
+  ServiceInstance,
+  ServiceReleaseInput,
+  ServiceReleaseRecord,
+  ServiceReleaseResult,
+  ServiceRollbackInput,
+  ServiceVersion,
   Secret,
   SecretInputPayload,
   SetupStatus,
@@ -193,6 +201,81 @@ type BackendRegistryManifestResult = {
   digest?: string;
   contentType?: string;
   manifest?: unknown;
+};
+
+type BackendServiceDefinition = {
+  id: string;
+  name: string;
+  code: string;
+  group?: string;
+  tags?: string;
+  description?: string;
+  registryId?: string;
+  image: string;
+  defaultTag?: string;
+  ports?: string;
+  envs?: string;
+  mounts?: string;
+  resourceLimits?: string;
+  targetType?: string;
+  targetId?: string;
+  status: ServiceDefinition["status"];
+  currentVersion?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackendServiceVersion = {
+  id: string;
+  serviceId: string;
+  version: string;
+  image: string;
+  imageTag: string;
+  imageDigest?: string;
+  config?: string;
+  createdBy?: string;
+  createdAt: string;
+};
+
+type BackendServiceInstance = {
+  id: string;
+  serviceId: string;
+  versionId?: string;
+  version?: string;
+  image: string;
+  imageTag: string;
+  dockerNodeId?: string;
+  containerId?: string;
+  name: string;
+  status: ServiceInstance["status"];
+  lastError?: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackendServiceReleaseRecord = {
+  id: string;
+  serviceId: string;
+  taskId: string;
+  action: ServiceReleaseRecord["action"];
+  fromVersionId?: string;
+  fromVersion?: string;
+  targetVersionId?: string;
+  targetVersion?: string;
+  status: ServiceReleaseRecord["status"];
+  message?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackendServiceReleaseResult = {
+  taskId: string;
+  releaseId: string;
 };
 
 type BackendDashboardSummary = {
@@ -370,6 +453,7 @@ function mapBackendDockerNode(node: BackendDockerNode): DockerNode {
     name: node.name,
     endpoint: node.endpoint,
     tlsEnabled: node.authType === "TLS",
+    secretId: node.secretId,
     status: node.status,
     description: node.description,
     lastCheckedAt: node.lastTestAt,
@@ -391,6 +475,95 @@ function mapBackendRegistry(registry: BackendRegistry): Registry {
     updatedBy: registry.updatedBy,
     createdAt: registry.createdAt,
     updatedAt: registry.updatedAt,
+  };
+}
+
+function parseJsonField<T>(value: string | undefined, fallback: T): T {
+  if (!value) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function mapBackendServiceDefinition(service: BackendServiceDefinition): ServiceDefinition {
+  return {
+    id: service.id,
+    name: service.name,
+    code: service.code,
+    group: service.group ?? "",
+    tags: parseTags(service.tags),
+    description: service.description,
+    registryId: service.registryId ?? "",
+    image: service.image,
+    defaultTag: service.defaultTag ?? "latest",
+    ports: parseJsonField(service.ports, []),
+    envs: parseJsonField(service.envs, []),
+    mounts: parseJsonField(service.mounts, []),
+    resourceLimits: parseJsonField(service.resourceLimits, {}),
+    targetType: (service.targetType as ServiceDefinition["targetType"]) ?? "DOCKER_NODE",
+    targetId: service.targetId ?? "",
+    status: service.status,
+    currentVersion: service.currentVersion ?? "",
+    createdBy: service.createdBy,
+    updatedBy: service.updatedBy,
+    createdAt: service.createdAt,
+    updatedAt: service.updatedAt,
+  };
+}
+
+function mapBackendServiceVersion(version: BackendServiceVersion): ServiceVersion {
+  return {
+    id: version.id,
+    serviceId: version.serviceId,
+    version: version.version,
+    image: version.image,
+    imageTag: version.imageTag,
+    imageDigest: version.imageDigest ?? "",
+    config: parseJsonField(version.config, {}),
+    createdBy: version.createdBy,
+    createdAt: version.createdAt,
+  };
+}
+
+function mapBackendServiceInstance(instance: BackendServiceInstance): ServiceInstance {
+  return {
+    id: instance.id,
+    serviceId: instance.serviceId,
+    versionId: instance.versionId ?? "",
+    version: instance.version ?? "",
+    image: instance.image,
+    imageTag: instance.imageTag,
+    dockerNodeId: instance.dockerNodeId ?? "",
+    containerId: instance.containerId ?? "",
+    name: instance.name,
+    status: instance.status,
+    lastError: instance.lastError ?? "",
+    startedAt: instance.startedAt,
+    stoppedAt: instance.stoppedAt,
+    createdAt: instance.createdAt,
+    updatedAt: instance.updatedAt,
+  };
+}
+
+function mapBackendServiceReleaseRecord(record: BackendServiceReleaseRecord): ServiceReleaseRecord {
+  return {
+    id: record.id,
+    serviceId: record.serviceId,
+    taskId: record.taskId,
+    action: record.action,
+    fromVersionId: record.fromVersionId ?? "",
+    fromVersion: record.fromVersion ?? "",
+    targetVersionId: record.targetVersionId ?? "",
+    targetVersion: record.targetVersion ?? "",
+    status: record.status,
+    message: record.message ?? "",
+    createdBy: record.createdBy,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
   };
 }
 
@@ -662,6 +835,110 @@ export const registriesApi = {
   },
 };
 
+function serializeJsonField(value: unknown): string {
+  return JSON.stringify(value ?? []);
+}
+
+export const servicesApi = {
+  list: async (keyword = "", status = ""): Promise<ServiceDefinition[]> => {
+    if (USE_MOCK) {
+      return mockService.listServices(token(), keyword, status);
+    }
+    const page = await http.get<BackendPage<BackendServiceDefinition>>(
+      `/services?keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}`,
+    );
+    return pageItems(page).map(mapBackendServiceDefinition);
+  },
+  detail: async (serviceId: string): Promise<ServiceDefinition> => {
+    if (USE_MOCK) {
+      return mockService.getService(token(), serviceId);
+    }
+    const service = await http.get<BackendServiceDefinition>(`/services/${serviceId}`);
+    return mapBackendServiceDefinition(service);
+  },
+  save: async (payload: ServiceDefinitionInput): Promise<ServiceDefinition> => {
+    if (USE_MOCK) {
+      return mockService.saveService(token(), payload);
+    }
+    const backendPayload = {
+      name: payload.name,
+      code: payload.code,
+      group: payload.group,
+      tags: serializeTags(payload.tags),
+      description: payload.description ?? "",
+      registryId: payload.registryId,
+      image: payload.image,
+      defaultTag: payload.defaultTag,
+      ports: payload.ports,
+      envs: payload.envs,
+      mounts: payload.mounts,
+      resourceLimits: payload.resourceLimits,
+      targetType: payload.targetType,
+      targetId: payload.targetId,
+      status: payload.status,
+    };
+    const service = payload.id
+      ? await http.patch<BackendServiceDefinition>(`/services/${payload.id}`, backendPayload)
+      : await http.post<BackendServiceDefinition>("/services", backendPayload);
+    return mapBackendServiceDefinition(service);
+  },
+  remove: async (serviceId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      return mockService.deleteService(token(), serviceId);
+    }
+    return http.delete<{ deleted: boolean }>(`/services/${serviceId}`);
+  },
+  instances: async (serviceId: string): Promise<ServiceInstance[]> => {
+    if (USE_MOCK) {
+      return mockService.listServiceInstances(token(), serviceId);
+    }
+    const page = await http.get<BackendPage<BackendServiceInstance>>(`/services/${serviceId}/instances`);
+    return pageItems(page).map(mapBackendServiceInstance);
+  },
+  releases: async (serviceId: string): Promise<ServiceReleaseRecord[]> => {
+    if (USE_MOCK) {
+      return mockService.listServiceReleases(token(), serviceId);
+    }
+    const page = await http.get<BackendPage<BackendServiceReleaseRecord>>(`/services/${serviceId}/releases`);
+    return pageItems(page).map(mapBackendServiceReleaseRecord);
+  },
+  history: async (serviceId: string): Promise<ServiceReleaseRecord[]> => {
+    if (USE_MOCK) {
+      return mockService.listServiceHistory(token(), serviceId);
+    }
+    const page = await http.get<BackendPage<BackendServiceReleaseRecord>>(`/services/${serviceId}/history`);
+    return pageItems(page).map(mapBackendServiceReleaseRecord);
+  },
+  versions: async (serviceId: string): Promise<ServiceVersion[]> => {
+    if (USE_MOCK) {
+      return mockService.listServiceVersions(token(), serviceId);
+    }
+    const page = await http.get<BackendPage<BackendServiceVersion>>(`/services/${serviceId}/versions`);
+    return pageItems(page).map(mapBackendServiceVersion);
+  },
+  release: async (serviceId: string, payload: ServiceReleaseInput): Promise<ServiceReleaseResult> => {
+    if (USE_MOCK) {
+      return mockService.releaseService(token(), serviceId, payload);
+    }
+    const result = await http.post<BackendServiceReleaseResult>(`/services/${serviceId}/releases`, payload);
+    return { taskId: result.taskId, releaseId: result.releaseId };
+  },
+  upgrade: async (serviceId: string, payload: ServiceReleaseInput): Promise<ServiceReleaseResult> => {
+    if (USE_MOCK) {
+      return mockService.upgradeService(token(), serviceId, payload);
+    }
+    const result = await http.post<BackendServiceReleaseResult>(`/services/${serviceId}/upgrades`, payload);
+    return { taskId: result.taskId, releaseId: result.releaseId };
+  },
+  rollback: async (serviceId: string, payload: ServiceRollbackInput): Promise<ServiceReleaseResult> => {
+    if (USE_MOCK) {
+      return mockService.rollbackService(token(), serviceId, payload);
+    }
+    const result = await http.post<BackendServiceReleaseResult>(`/services/${serviceId}/rollbacks`, payload);
+    return { taskId: result.taskId, releaseId: result.releaseId };
+  },
+};
+
 export const terminalApi = {
   create: async (hostId: string): Promise<TerminalSession> => {
     return USE_MOCK
@@ -672,6 +949,16 @@ export const terminalApi = {
     return USE_MOCK
       ? mockService.getTerminalSession(token(), sessionId)
       : http.get<TerminalSession>(`/terminal/sessions/${sessionId}`);
+  },
+  wsUrl: (sessionId: string): string => {
+    const sessionToken = useSessionStore.getState().token;
+    const base = API_BASE_URL.startsWith("http") ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
+    const url = new URL(`${base}/terminal/sessions/${sessionId}/ws`);
+    if (sessionToken) {
+      url.searchParams.set("token", sessionToken);
+    }
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
   },
 };
 
@@ -691,6 +978,7 @@ export const dockerApi = {
       name: payload.name,
       endpoint: payload.endpoint,
       authType: payload.tlsEnabled ? "TLS" : "NONE",
+      secretId: payload.tlsEnabled ? payload.secretId : "",
       description: payload.description,
     };
     const node = payload.id

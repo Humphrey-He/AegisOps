@@ -12,7 +12,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { auditsApi, dockerApi, tasksApi } from "../../lib/api";
+import { auditsApi, dockerApi, secretsApi, tasksApi } from "../../lib/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
@@ -30,6 +30,7 @@ type NodeFormValues = {
   name: string;
   endpoint: string;
   tlsEnabled: boolean;
+  secretId?: string;
   description?: string;
 };
 
@@ -51,6 +52,10 @@ export function DockerNodesPage() {
   const tasksQuery = useQuery({
     queryKey: queryKeys.tasks,
     queryFn: tasksApi.list,
+  });
+  const dockerTlsSecretsQuery = useQuery({
+    queryKey: queryKeys.secrets(""),
+    queryFn: () => secretsApi.list(""),
   });
   const auditsQuery = useQuery({
     queryKey: queryKeys.audits,
@@ -232,6 +237,7 @@ export function DockerNodesPage() {
                             name: selectedNode.name,
                             endpoint: selectedNode.endpoint,
                             tlsEnabled: selectedNode.tlsEnabled,
+                            secretId: selectedNode.secretId,
                             description: selectedNode.description,
                           });
                           setDrawerOpen(true);
@@ -300,6 +306,7 @@ export function DockerNodesPage() {
                 name: values.name,
                 endpoint: values.endpoint,
                 tlsEnabled: values.tlsEnabled,
+                secretId: values.secretId,
                 description: values.description,
               } satisfies DockerNodeInput)
             }
@@ -315,6 +322,20 @@ export function DockerNodesPage() {
             </Form.Item>
             <Form.Item label="说明" name="description">
               <Input.TextArea rows={4} />
+            </Form.Item>
+            <Form.Item shouldUpdate={(previous, current) => previous.tlsEnabled !== current.tlsEnabled} noStyle>
+              {({ getFieldValue }) =>
+                getFieldValue("tlsEnabled") ? (
+                  <Form.Item label="TLS Secret" name="secretId" rules={[{ required: true, message: "请选择 Docker TLS Secret" }]}>
+                    <Select
+                      loading={dockerTlsSecretsQuery.isLoading}
+                      options={(dockerTlsSecretsQuery.data ?? [])
+                        .filter((secret) => secret.type === "DOCKER_TLS")
+                        .map((secret) => ({ label: secret.name, value: secret.id }))}
+                    />
+                  </Form.Item>
+                ) : null
+              }
             </Form.Item>
           </Form>
         </FormDrawer>

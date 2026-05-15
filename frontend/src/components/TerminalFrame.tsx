@@ -1,5 +1,5 @@
 import { Button, Card, Space, Typography } from "antd";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
@@ -8,11 +8,14 @@ type TerminalFrameProps = {
   title: string;
   lines: string[];
   status: "CONNECTED" | "DISCONNECTED";
+  wsUrl: string;
 };
 
-export function TerminalFrame({ title, lines, status }: TerminalFrameProps) {
+export function TerminalFrame({ title, lines, status, wsUrl }: TerminalFrameProps) {
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<Terminal | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const [socketStatus, setSocketStatus] = useState<"CONNECTING" | "CONNECTED" | "DISCONNECTED">("CONNECTING");
 
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) {
@@ -32,44 +35,31 @@ export function TerminalFrame({ title, lines, status }: TerminalFrameProps) {
     terminal.loadAddon(fitAddon);
     terminal.open(terminalRef.current);
     fitAddon.fit();
-    terminal.writeln(`AegisOps WebSSH mock session`);
-    terminal.writeln(`----------------------------------------`);
+    terminal.writeln("AegisOps WebSSH session");
+    terminal.writeln("----------------------------------------");
     lines.forEach((line) => terminal.writeln(line));
     terminal.writeln("");
-    terminal.write("$ ");
 
-    let command = "";
-    terminal.onData((data) => {
-      if (status !== "CONNECTED") {
-        return;
-      }
-      if (data === "\r") {
-        const input = command.trim();
-        if (input === "help") {
-          terminal.writeln("\r\nAvailable demo commands: help, clear, status, exit");
-        } else if (input === "clear") {
-          terminal.clear();
-        } else if (input === "status") {
-          terminal.writeln("\r\nHost status: HEALTHY, WebSSH channel: CONNECTED");
-        } else if (input === "exit") {
-          terminal.writeln("\r\nSession remains open in MVP mock mode.");
-        } else if (input) {
-          terminal.writeln(`\r\nCommand not found: ${input}`);
-        }
-        command = "";
-        terminal.write("\r\n$ ");
-        return;
-      }
-      if (data === "\u007F") {
-        if (command.length > 0) {
-          command = command.slice(0, -1);
-          terminal.write("\b \b");
-        }
-        return;
-      }
-      if (data >= " ") {
-        command += data;
-        terminal.write(data);
+    const socket = new WebSocket(wsUrl);
+    socketRef.current = socket;
+    socket.onopen = () => {
+      setSocketStatus("CONNECTED");
+      terminal.writeln("Connected.");
+    };
+    socket.onmessage = (event) => {
+      terminal.write(String(event.data));
+    };
+    socket.onerror = () => {
+      terminal.writeln("\r\nWebSSH connection failed.");
+    };
+    socket.onclose = () => {
+      setSocketStatus("DISCONNECTED");
+      terminal.writeln("\r\nDisconnected.");
+    };
+
+    const disposable = terminal.onData((data) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(data);
       }
     });
 
@@ -78,10 +68,15 @@ export function TerminalFrame({ title, lines, status }: TerminalFrameProps) {
     window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("resize", resize);
+      disposable.dispose();
+      socket.close();
+      socketRef.current = null;
       terminal.dispose();
       xtermRef.current = null;
     };
-  }, [lines, status]);
+  }, [lines, wsUrl]);
+
+  const displayStatus = socketStatus === "CONNECTED" ? "CONNECTED" : status === "CONNECTED" ? socketStatus : status;
 
   return (
     <Card className="page-card">
@@ -91,9 +86,9 @@ export function TerminalFrame({ title, lines, status }: TerminalFrameProps) {
             <Typography.Title level={4} style={{ margin: 0 }}>
               {title}
             </Typography.Title>
-            <Typography.Text type="secondary">这是一期前端 demo，会话输入已接到 xterm.js 基础交互。</Typography.Text>
+            <Typography.Text type="secondary">WebSSH over WebSocket</Typography.Text>
           </Space>
-          <Button disabled>{status === "CONNECTED" ? "已连接" : "已断开"}</Button>
+          <Button disabled>{displayStatus === "CONNECTED" ? "已连接" : displayStatus === "CONNECTING" ? "连接中" : "已断开"}</Button>
         </div>
         <div className="terminal-surface">
           <div ref={terminalRef} style={{ width: "100%", height: 520 }} />

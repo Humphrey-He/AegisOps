@@ -17,6 +17,14 @@ import type {
   RegistryManifestResult,
   RegistryRepositoriesResult,
   RegistryTagsResult,
+  ServiceDefinition,
+  ServiceDefinitionInput,
+  ServiceInstance,
+  ServiceReleaseInput,
+  ServiceReleaseRecord,
+  ServiceReleaseResult,
+  ServiceRollbackInput,
+  ServiceVersion,
   Secret,
   SecretInputPayload,
   Task,
@@ -57,6 +65,10 @@ type MockDb = {
   hosts: Host[];
   registries: Registry[];
   registryCatalogs: Record<string, StoredRegistryCatalog>;
+  services: ServiceDefinition[];
+  serviceVersions: ServiceVersion[];
+  serviceInstances: ServiceInstance[];
+  serviceReleases: ServiceReleaseRecord[];
   dockerNodes: DockerNode[];
   containers: ContainerItem[];
   tasks: Task[];
@@ -93,6 +105,10 @@ function createStoredDb(): MockDb {
     hosts: [],
     registries: [],
     registryCatalogs: {},
+    services: [],
+    serviceVersions: [],
+    serviceInstances: [],
+    serviceReleases: [],
     dockerNodes: [],
     containers: [],
     tasks: [],
@@ -112,6 +128,10 @@ function migrateDb(rawDb: Partial<MockDb>): MockDb {
     hosts: rawDb.hosts ?? [],
     registries: rawDb.registries ?? [],
     registryCatalogs: rawDb.registryCatalogs ?? {},
+    services: rawDb.services ?? [],
+    serviceVersions: rawDb.serviceVersions ?? [],
+    serviceInstances: rawDb.serviceInstances ?? [],
+    serviceReleases: rawDb.serviceReleases ?? [],
     dockerNodes: rawDb.dockerNodes ?? [],
     containers: rawDb.containers ?? [],
     tasks: rawDb.tasks ?? [],
@@ -127,7 +147,16 @@ function migrateDb(rawDb: Partial<MockDb>): MockDb {
     if (role.id === "role-ops") {
       return {
         ...role,
-        permissions: Array.from(new Set([...role.permissions, "registries.view", "registries.manage"])),
+        permissions: Array.from(
+          new Set([
+            ...role.permissions,
+            "registries.view",
+            "registries.manage",
+            "services.view",
+            "services.manage",
+            "services.release",
+          ]),
+        ),
       };
     }
     return role;
@@ -535,6 +564,124 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     },
   );
 
+  const serviceId = crypto.randomUUID();
+  const currentVersionId = crypto.randomUUID();
+  const serviceReleaseTask = createTask(db, {
+    type: "SERVICE_RELEASE",
+    target: "service:aegisops-api",
+    initiatedBy: admin.displayName,
+    summary: "演示任务：发布 Aegis API 服务",
+    steps: ["校验服务定义", "固化镜像版本", "记录发布状态"],
+  });
+  finishTask(db, serviceReleaseTask.id, "服务发布演示任务已完成。");
+
+  db.services.push({
+    id: serviceId,
+    name: "Aegis API",
+    code: "aegisops-api",
+    group: "core",
+    tags: ["production", "api"],
+    description: "二期服务定义演示数据，复用 Registry 和 Docker 节点信息。",
+    registryId,
+    image: "aegisops/api",
+    defaultTag: "latest",
+    ports: [{ name: "http", containerPort: 8080, hostPort: 18080, protocol: "TCP" }],
+    envs: [
+      { key: "GIN_MODE", value: "release" },
+      { key: "AEGIS_ENV", value: "prod" },
+    ],
+    mounts: [{ source: "/data/aegisops/api", target: "/app/data" }],
+    resourceLimits: { cpu: "500m", memory: "512Mi" },
+    targetType: "DOCKER_NODE",
+    targetId: nodeId,
+    status: "ACTIVE",
+    currentVersion: "v0.2.0",
+    createdBy: admin.id,
+    updatedBy: admin.id,
+    createdAt: now(),
+    updatedAt: now(),
+  });
+
+  db.serviceVersions.push(
+    {
+      id: currentVersionId,
+      serviceId,
+      version: "v0.2.0",
+      image: "aegisops/api",
+      imageTag: "v0.2.0",
+      imageDigest: "sha256:9b1c9ef81ee8603cc502af42be1dd88d9637b6d96398b5aa07ed9e419f5bb2ab",
+      config: serializeServiceConfig({
+        ports: [{ name: "http", containerPort: 8080, hostPort: 18080 }],
+        envs: [{ key: "GIN_MODE", value: "release" }],
+      }),
+      createdBy: admin.id,
+      createdAt: now(),
+    },
+    {
+      id: crypto.randomUUID(),
+      serviceId,
+      version: "v0.1.0",
+      image: "aegisops/api",
+      imageTag: "v0.1.0",
+      imageDigest: "sha256:7fb6c95aa3c7456d4eac3af9122c7c8dd7e5c8e6a178efcae738aa01b8169d10",
+      config: serializeServiceConfig({
+        ports: [{ name: "http", containerPort: 8080, hostPort: 18080 }],
+      }),
+      createdBy: admin.id,
+      createdAt: now(),
+    },
+  );
+
+  db.serviceInstances.push({
+    id: crypto.randomUUID(),
+    serviceId,
+    versionId: currentVersionId,
+    version: "v0.2.0",
+    image: "aegisops/api",
+    imageTag: "v0.2.0",
+    dockerNodeId: nodeId,
+    containerId: "container-api",
+    name: "aegisops-api",
+    status: "RUNNING",
+    lastError: "",
+    startedAt: now(),
+    createdAt: now(),
+    updatedAt: now(),
+  });
+
+  db.serviceReleases.push(
+    {
+      id: crypto.randomUUID(),
+      serviceId,
+      taskId: serviceReleaseTask.id,
+      action: "RELEASE",
+      fromVersionId: "",
+      fromVersion: "",
+      targetVersionId: currentVersionId,
+      targetVersion: "v0.2.0",
+      status: "SUCCESS",
+      message: "首次发布到生产节点。",
+      createdBy: admin.id,
+      createdAt: now(),
+      updatedAt: now(),
+    },
+    {
+      id: crypto.randomUUID(),
+      serviceId,
+      taskId: serviceReleaseTask.id,
+      action: "UPGRADE",
+      fromVersionId: "",
+      fromVersion: "v0.1.0",
+      targetVersionId: currentVersionId,
+      targetVersion: "v0.2.0",
+      status: "SUCCESS",
+      message: "升级到当前版本。",
+      createdBy: admin.id,
+      createdAt: now(),
+      updatedAt: now(),
+    },
+  );
+
   const task = createTask(db, {
     type: "DOCKER_RESTART",
     target: "gateway-nginx",
@@ -595,6 +742,34 @@ function validateRegistryPayload(payload: RegistryInput) {
       status: 422,
       code: "VALIDATION_ERROR",
       message: "请补全 Registry 信息。",
+      traceId: traceId(),
+      fieldErrors,
+    });
+  }
+}
+
+function validateServicePayload(payload: ServiceDefinitionInput) {
+  const fieldErrors: FieldErrors = {};
+  if (!payload.name.trim()) {
+    fieldErrors.name = "请输入服务名称";
+  }
+  if (!payload.code.trim()) {
+    fieldErrors.code = "请输入服务编码";
+  }
+  if (!payload.image.trim()) {
+    fieldErrors.image = "请输入镜像仓库路径";
+  }
+  if (!payload.registryId.trim()) {
+    fieldErrors.registryId = "请选择关联 Registry";
+  }
+  if (!payload.targetId.trim()) {
+    fieldErrors.targetId = "请选择发布目标";
+  }
+  if (Object.keys(fieldErrors).length) {
+    throw new ApiError({
+      status: 422,
+      code: "VALIDATION_ERROR",
+      message: "请补全服务定义信息。",
       traceId: traceId(),
       fieldErrors,
     });
@@ -671,6 +846,23 @@ function bindSecretUsage(db: MockDb, secretId: string | undefined, resourceName:
     next.delete(resourceName);
   }
   secret.usedBy = Array.from(next);
+}
+
+function getServiceOrThrow(db: MockDb, serviceId: string) {
+  const service = db.services.find((item) => item.id === serviceId);
+  if (!service) {
+    throw new ApiError({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "服务定义不存在。",
+      traceId: traceId(),
+    });
+  }
+  return service;
+}
+
+function serializeServiceConfig(value: unknown) {
+  return JSON.stringify(value ?? {});
 }
 
 export const mockService = {
@@ -1127,6 +1319,331 @@ export const mockService = {
     const db = readDb();
     requirePermission(token, "registries.view", db);
     return delay(getRegistryOrThrow(db, registryId));
+  },
+
+  async listServices(token: string | null, keyword = "", status = "") {
+    const db = readDb();
+    requirePermission(token, "services.view", db);
+    const items = filterByKeyword(db.services, keyword, (item) => {
+      return `${item.name} ${item.code} ${item.image} ${item.group} ${item.tags.join(" ")}`;
+    }).filter((item) => !status || item.status === status);
+    return delay(items);
+  },
+
+  async getService(token: string | null, serviceId: string) {
+    const db = readDb();
+    requirePermission(token, "services.view", db);
+    return delay(getServiceOrThrow(db, serviceId));
+  },
+
+  async saveService(token: string | null, payload: ServiceDefinitionInput) {
+    const db = readDb();
+    const actor = requirePermission(token, "services.manage", db);
+    validateServicePayload(payload);
+    if (!db.registries.some((item) => item.id === payload.registryId)) {
+      throw new ApiError({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: "关联的 Registry 不存在。",
+        traceId: traceId(),
+        fieldErrors: { registryId: "关联的 Registry 不存在" },
+      });
+    }
+    if (!db.dockerNodes.some((item) => item.id === payload.targetId)) {
+      throw new ApiError({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: "发布目标不存在。",
+        traceId: traceId(),
+        fieldErrors: { targetId: "发布目标不存在" },
+      });
+    }
+    assertUniqueName(
+      !db.services.some((item) => item.code === payload.code && item.id !== payload.id),
+      "服务编码已存在。",
+      { code: "服务编码已存在" },
+    );
+
+    if (payload.id) {
+      const service = getServiceOrThrow(db, payload.id);
+      service.name = payload.name.trim();
+      service.group = payload.group.trim();
+      service.tags = payload.tags;
+      service.description = payload.description?.trim();
+      service.registryId = payload.registryId;
+      service.image = payload.image.trim();
+      service.defaultTag = payload.defaultTag.trim() || "latest";
+      service.ports = payload.ports;
+      service.envs = payload.envs;
+      service.mounts = payload.mounts;
+      service.resourceLimits = payload.resourceLimits;
+      service.targetType = payload.targetType;
+      service.targetId = payload.targetId;
+      service.status = payload.status;
+      service.updatedBy = actor.id;
+      service.updatedAt = now();
+      appendAudit(db, {
+        actor: actor.displayName,
+        action: "service.update",
+        resourceType: "service",
+        resourceName: service.code,
+        result: "SUCCESS",
+        summary: "更新服务定义配置。",
+      });
+      writeDb(db);
+      return delay(service);
+    }
+
+    const created: ServiceDefinition = {
+      id: crypto.randomUUID(),
+      name: payload.name.trim(),
+      code: payload.code.trim(),
+      group: payload.group.trim(),
+      tags: payload.tags,
+      description: payload.description?.trim(),
+      registryId: payload.registryId,
+      image: payload.image.trim(),
+      defaultTag: payload.defaultTag.trim() || "latest",
+      ports: payload.ports,
+      envs: payload.envs,
+      mounts: payload.mounts,
+      resourceLimits: payload.resourceLimits,
+      targetType: payload.targetType,
+      targetId: payload.targetId,
+      status: payload.status,
+      currentVersion: "",
+      createdBy: actor.id,
+      updatedBy: actor.id,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.services.unshift(created);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "service.create",
+      resourceType: "service",
+      resourceName: created.code,
+      result: "SUCCESS",
+      summary: "创建新的服务定义。",
+    });
+    writeDb(db);
+    return delay(created);
+  },
+
+  async deleteService(token: string | null, serviceId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "services.manage", db);
+    const service = getServiceOrThrow(db, serviceId);
+    if (db.serviceInstances.some((item) => item.serviceId === serviceId)) {
+      throw new ApiError({
+        status: 409,
+        code: "SERVICE_HAS_INSTANCES",
+        message: "服务已有实例，无法删除。",
+        traceId: traceId(),
+      });
+    }
+    db.services = db.services.filter((item) => item.id !== serviceId);
+    db.serviceVersions = db.serviceVersions.filter((item) => item.serviceId !== serviceId);
+    db.serviceReleases = db.serviceReleases.filter((item) => item.serviceId !== serviceId);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "service.delete",
+      resourceType: "service",
+      resourceName: service.code,
+      result: "SUCCESS",
+      summary: "删除服务定义。",
+    });
+    writeDb(db);
+    return delay({ deleted: true });
+  },
+
+  async listServiceInstances(token: string | null, serviceId: string) {
+    const db = readDb();
+    requirePermission(token, "services.view", db);
+    getServiceOrThrow(db, serviceId);
+    return delay(db.serviceInstances.filter((item) => item.serviceId === serviceId));
+  },
+
+  async listServiceReleases(token: string | null, serviceId: string) {
+    const db = readDb();
+    requirePermission(token, "services.view", db);
+    getServiceOrThrow(db, serviceId);
+    return delay(db.serviceReleases.filter((item) => item.serviceId === serviceId));
+  },
+
+  async listServiceHistory(token: string | null, serviceId: string) {
+    const db = readDb();
+    requirePermission(token, "services.view", db);
+    getServiceOrThrow(db, serviceId);
+    return delay(db.serviceReleases.filter((item) => item.serviceId === serviceId));
+  },
+
+  async listServiceVersions(token: string | null, serviceId: string) {
+    const db = readDb();
+    requirePermission(token, "services.view", db);
+    getServiceOrThrow(db, serviceId);
+    return delay(db.serviceVersions.filter((item) => item.serviceId === serviceId));
+  },
+
+  async releaseService(token: string | null, serviceId: string, payload: ServiceReleaseInput): Promise<ServiceReleaseResult> {
+    const db = readDb();
+    const actor = requirePermission(token, "services.release", db);
+    const service = getServiceOrThrow(db, serviceId);
+    const versionId = crypto.randomUUID();
+    const task = createTask(db, {
+      type: "SERVICE_RELEASE",
+      target: `service:${service.code}`,
+      initiatedBy: actor.displayName,
+      summary: `发布服务 ${service.code}:${payload.version || payload.imageTag}`,
+      steps: ["校验发布参数", "固化镜像版本", "写入实例状态"],
+    });
+    finishTask(db, task.id, "服务发布完成。");
+
+    const version = payload.version || payload.imageTag;
+    const targetNodeId = payload.targetId || service.targetId;
+    db.serviceVersions.unshift({
+      id: versionId,
+      serviceId,
+      version,
+      image: service.image,
+      imageTag: payload.imageTag,
+      imageDigest: payload.imageDigest ?? "",
+      config: serializeServiceConfig({
+        ports: service.ports,
+        envs: service.envs,
+        mounts: service.mounts,
+        resourceLimits: service.resourceLimits,
+      }),
+      createdBy: actor.id,
+      createdAt: now(),
+    });
+    db.serviceInstances.unshift({
+      id: crypto.randomUUID(),
+      serviceId,
+      versionId,
+      version,
+      image: service.image,
+      imageTag: payload.imageTag,
+      dockerNodeId: targetNodeId,
+      containerId: `container-${service.code}-${version}`,
+      name: service.code,
+      status: "RUNNING",
+      lastError: "",
+      startedAt: now(),
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    const release: ServiceReleaseRecord = {
+      id: crypto.randomUUID(),
+      serviceId,
+      taskId: task.id,
+      action: "RELEASE",
+      fromVersionId: "",
+      fromVersion: service.currentVersion,
+      targetVersionId: versionId,
+      targetVersion: version,
+      status: "SUCCESS",
+      message: "完成一次服务发布。",
+      createdBy: actor.id,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.serviceReleases.unshift(release);
+    service.currentVersion = version;
+    service.status = "ACTIVE";
+    service.targetId = targetNodeId;
+    service.updatedBy = actor.id;
+    service.updatedAt = now();
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "service.release",
+      resourceType: "service",
+      resourceName: service.code,
+      result: "SUCCESS",
+      summary: `发布服务到版本 ${version}。`,
+    });
+    writeDb(db);
+    return delay({ taskId: task.id, releaseId: release.id });
+  },
+
+  async upgradeService(token: string | null, serviceId: string, payload: ServiceReleaseInput): Promise<ServiceReleaseResult> {
+    const result = await this.releaseService(token, serviceId, payload);
+    const db = readDb();
+    const release = db.serviceReleases.find((item) => item.id === result.releaseId);
+    if (release) {
+      release.action = "UPGRADE";
+      release.message = "完成一次服务升级。";
+      writeDb(db);
+    }
+    return result;
+  },
+
+  async rollbackService(token: string | null, serviceId: string, payload: ServiceRollbackInput): Promise<ServiceReleaseResult> {
+    const db = readDb();
+    const actor = requirePermission(token, "services.release", db);
+    const service = getServiceOrThrow(db, serviceId);
+    const targetVersion = db.serviceVersions.find((item) => item.id === payload.versionId && item.serviceId === serviceId);
+    if (!targetVersion) {
+      throw new ApiError({
+        status: 404,
+        code: "NOT_FOUND",
+        message: "目标版本不存在。",
+        traceId: traceId(),
+      });
+    }
+    const task = createTask(db, {
+      type: "SERVICE_ROLLBACK",
+      target: `service:${service.code}`,
+      initiatedBy: actor.displayName,
+      summary: `回滚服务 ${service.code} 到 ${targetVersion.version}`,
+      steps: ["确认目标版本", "更新实例状态", "记录回滚结果"],
+    });
+    finishTask(db, task.id, "服务回滚完成。");
+    db.serviceInstances.unshift({
+      id: crypto.randomUUID(),
+      serviceId,
+      versionId: targetVersion.id,
+      version: targetVersion.version,
+      image: targetVersion.image,
+      imageTag: targetVersion.imageTag,
+      dockerNodeId: service.targetId,
+      containerId: `container-${service.code}-${targetVersion.version}-rollback`,
+      name: service.code,
+      status: "ROLLBACK",
+      lastError: "",
+      startedAt: now(),
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    const release: ServiceReleaseRecord = {
+      id: crypto.randomUUID(),
+      serviceId,
+      taskId: task.id,
+      action: "ROLLBACK",
+      fromVersionId: "",
+      fromVersion: service.currentVersion,
+      targetVersionId: targetVersion.id,
+      targetVersion: targetVersion.version,
+      status: "SUCCESS",
+      message: "完成一次服务回滚。",
+      createdBy: actor.id,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.serviceReleases.unshift(release);
+    service.currentVersion = targetVersion.version;
+    service.updatedBy = actor.id;
+    service.updatedAt = now();
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "service.rollback",
+      resourceType: "service",
+      resourceName: service.code,
+      result: "SUCCESS",
+      summary: `回滚服务到版本 ${targetVersion.version}。`,
+    });
+    writeDb(db);
+    return delay({ taskId: task.id, releaseId: release.id });
   },
 
   async saveRegistry(token: string | null, payload: RegistryInput) {

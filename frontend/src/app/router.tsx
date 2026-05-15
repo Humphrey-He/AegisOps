@@ -7,6 +7,7 @@ import { DashboardPage } from "../pages/dashboard/DashboardPage";
 import { HostsPage } from "../pages/assets/HostsPage";
 import { SecretsPage } from "../pages/secrets/SecretsPage";
 import { RegistriesPage } from "../pages/registries/RegistriesPage";
+import { ServicesPage } from "../pages/services/ServicesPage";
 import { DockerNodesPage } from "../pages/docker/DockerNodesPage";
 import { DockerNodeDetailPage } from "../pages/docker/DockerNodeDetailPage";
 import { TasksPage } from "../pages/tasks/TasksPage";
@@ -93,6 +94,15 @@ export const router = createBrowserRouter([
           </RequirePermission>
         ),
         handle: { title: "Registry" },
+      },
+      {
+        path: "delivery/services",
+        element: (
+          <RequirePermission permission="services.view">
+            <ServicesPage />
+          </RequirePermission>
+        ),
+        handle: { title: "服务定义" },
       },
       {
         path: "docker/nodes",
