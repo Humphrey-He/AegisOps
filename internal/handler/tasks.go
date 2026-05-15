@@ -20,10 +20,12 @@ func NewTaskHandler(service *task.Service) *TaskHandler {
 
 func (h *TaskHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
 	r.GET("/tasks", rbac.RequirePermission(rbacService, "tasks.view"), h.List)
-	r.POST("/tasks", rbac.RequirePermission(rbacService, "tasks.view"), h.Create)
+	r.POST("/tasks", rbac.RequirePermission(rbacService, "tasks.create"), h.Create)
 	r.GET("/tasks/:id", rbac.RequirePermission(rbacService, "tasks.view"), h.Get)
-	r.POST("/tasks/:id/steps", rbac.RequirePermission(rbacService, "tasks.view"), h.AddStep)
-	r.POST("/tasks/:id/logs", rbac.RequirePermission(rbacService, "tasks.view"), h.AddLog)
+	r.POST("/tasks/:id/steps", rbac.RequirePermission(rbacService, "tasks.dispatch"), h.AddStep)
+	r.POST("/tasks/:id/logs", rbac.RequirePermission(rbacService, "tasks.dispatch"), h.AddLog)
+	r.POST("/tasks/:id/cancel", rbac.RequirePermission(rbacService, "tasks.cancel"), h.Cancel)
+	r.POST("/tasks/:id/retry", rbac.RequirePermission(rbacService, "tasks.retry"), h.Retry)
 }
 
 func (h *TaskHandler) List(c *gin.Context) {
@@ -91,6 +93,23 @@ func (h *TaskHandler) AddLog(c *gin.Context) {
 		req.Level = model.TaskLogLevelInfo
 	}
 	item, err := h.service.AddLog(c.Request.Context(), c.Param("id"), req.StepID, req.Level, req.Message)
+	if err != nil {
+		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	Created(c, item)
+}
+
+func (h *TaskHandler) Cancel(c *gin.Context) {
+	if err := h.service.Cancel(c.Request.Context(), c.Param("id")); err != nil {
+		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	OK(c, gin.H{"canceled": true})
+}
+
+func (h *TaskHandler) Retry(c *gin.Context) {
+	item, err := h.service.Retry(c.Request.Context(), c.Param("id"), OperatorID(c))
 	if err != nil {
 		Error(c, http.StatusBadRequest, err.Error())
 		return

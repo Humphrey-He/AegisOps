@@ -454,6 +454,294 @@ func TestNotificationAlertAndHealthRoutesSmoke(t *testing.T) {
 	}
 }
 
+func TestExportBackupRoutesSmoke(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	createService := performRequest(router, http.MethodPost, "/api/services", []byte(`{
+		"name":"Export Demo",
+		"code":"export-demo",
+		"image":"registry.local/export/demo",
+		"defaultTag":"1.0.0"
+	}`), token)
+	if createService.Code != http.StatusCreated {
+		t.Fatalf("POST /api/services status = %d, want %d; body=%s", createService.Code, http.StatusCreated, createService.Body.String())
+	}
+	var servicePayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createService.Body.Bytes(), &servicePayload); err != nil {
+		t.Fatalf("decode service response: %v", err)
+	}
+
+	exportService := performRequest(router, http.MethodPost, "/api/exports/resources", []byte(`{
+		"resourceType":"service",
+		"resourceId":"`+servicePayload.Data.ID+`",
+		"masked":true
+	}`), token)
+	if exportService.Code != http.StatusCreated {
+		t.Fatalf("POST /api/exports/resources status = %d, want %d; body=%s", exportService.Code, http.StatusCreated, exportService.Body.String())
+	}
+	serviceExportID := decodeID(t, exportService.Body.Bytes())
+	downloadService := performRequest(router, http.MethodGet, "/api/exports/"+serviceExportID+"/download", nil, token)
+	if downloadService.Code != http.StatusOK {
+		t.Fatalf("GET /api/exports/:id/download status = %d, want %d; body=%s", downloadService.Code, http.StatusOK, downloadService.Body.String())
+	}
+
+	createTask := performRequest(router, http.MethodPost, "/api/tasks", []byte(`{
+		"type":"export.test",
+		"title":"Export Incident Task",
+		"targetType":"service",
+		"targetId":"`+servicePayload.Data.ID+`",
+		"steps":[{"name":"collect","sortOrder":1}]
+	}`), token)
+	if createTask.Code != http.StatusCreated {
+		t.Fatalf("POST /api/tasks status = %d, want %d; body=%s", createTask.Code, http.StatusCreated, createTask.Body.String())
+	}
+	taskID := decodeID(t, createTask.Body.Bytes())
+	incident := performRequest(router, http.MethodPost, "/api/exports/incidents", []byte(`{"taskId":"`+taskID+`","masked":true}`), token)
+	if incident.Code != http.StatusCreated {
+		t.Fatalf("POST /api/exports/incidents status = %d, want %d; body=%s", incident.Code, http.StatusCreated, incident.Body.String())
+	}
+	incidentID := decodeID(t, incident.Body.Bytes())
+	downloadIncident := performRequest(router, http.MethodGet, "/api/exports/"+incidentID+"/download", nil, token)
+	if downloadIncident.Code != http.StatusOK {
+		t.Fatalf("GET /api/exports/:id/download incident status = %d, want %d; body=%s", downloadIncident.Code, http.StatusOK, downloadIncident.Body.String())
+	}
+
+	backup := performRequest(router, http.MethodPost, "/api/backups", []byte(`{"masked":true}`), token)
+	if backup.Code != http.StatusCreated {
+		t.Fatalf("POST /api/backups status = %d, want %d; body=%s", backup.Code, http.StatusCreated, backup.Body.String())
+	}
+	backupID := decodeID(t, backup.Body.Bytes())
+	manifest := performRequest(router, http.MethodGet, "/api/backups/"+backupID+"/manifest", nil, token)
+	if manifest.Code != http.StatusOK {
+		t.Fatalf("GET /api/backups/:id/manifest status = %d, want %d; body=%s", manifest.Code, http.StatusOK, manifest.Body.String())
+	}
+	downloadBackup := performRequest(router, http.MethodGet, "/api/backups/"+backupID+"/download", nil, token)
+	if downloadBackup.Code != http.StatusOK {
+		t.Fatalf("GET /api/backups/:id/download status = %d, want %d; body=%s", downloadBackup.Code, http.StatusOK, downloadBackup.Body.String())
+	}
+}
+
+func TestSecuritySchedulerRoutesSmoke(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	adminToken := loginAndToken(t, router)
+
+	createUser := performRequest(router, http.MethodPost, "/api/users", []byte(`{
+		"username":"taskviewer",
+		"password":"plain123456",
+		"displayName":"Task Viewer",
+		"status":"active"
+	}`), adminToken)
+	if createUser.Code != http.StatusCreated {
+		t.Fatalf("POST /api/users status = %d, want %d; body=%s", createUser.Code, http.StatusCreated, createUser.Body.String())
+	}
+	plainLogin := performRequest(router, http.MethodPost, "/api/auth/login", []byte(`{"username":"taskviewer","password":"plain123456"}`), "")
+	if plainLogin.Code != http.StatusOK {
+		t.Fatalf("plain login status = %d, want %d; body=%s", plainLogin.Code, http.StatusOK, plainLogin.Body.String())
+	}
+	var loginPayload struct {
+		Data struct {
+			Tokens struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(plainLogin.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	forbiddenTaskCreate := performRequest(router, http.MethodPost, "/api/tasks", []byte(`{"type":"manual","title":"should fail"}`), loginPayload.Data.Tokens.AccessToken)
+	if forbiddenTaskCreate.Code != http.StatusForbidden {
+		t.Fatalf("POST /api/tasks without tasks.create status = %d, want %d; body=%s", forbiddenTaskCreate.Code, http.StatusForbidden, forbiddenTaskCreate.Body.String())
+	}
+
+	createSecret := performRequest(router, http.MethodPost, "/api/secrets", []byte(`{
+		"name":"Telegram Bot Secret",
+		"type":"API_TOKEN",
+		"purpose":"telegram",
+		"value":"{\"botToken\":\"token-value\",\"chatId\":\"7433377081\"}"
+	}`), adminToken)
+	if createSecret.Code != http.StatusCreated {
+		t.Fatalf("POST /api/secrets status = %d, want %d; body=%s", createSecret.Code, http.StatusCreated, createSecret.Body.String())
+	}
+	secretID := decodeID(t, createSecret.Body.Bytes())
+
+	createChannel := performRequest(router, http.MethodPost, "/api/notifications/channels", []byte(`{
+		"name":"Secret Telegram",
+		"type":"telegram",
+		"enabled":true,
+		"language":"zh-CN",
+		"configSecretId":"`+secretID+`",
+		"defaultTarget":"7433377081"
+	}`), adminToken)
+	if createChannel.Code != http.StatusCreated {
+		t.Fatalf("POST /api/notifications/channels status = %d, want %d; body=%s", createChannel.Code, http.StatusCreated, createChannel.Body.String())
+	}
+	if bytes.Contains(createChannel.Body.Bytes(), []byte("token-value")) {
+		t.Fatalf("notification channel response leaked secret config: %s", createChannel.Body.String())
+	}
+	refs := performRequest(router, http.MethodGet, "/api/secrets/"+secretID+"/references", nil, adminToken)
+	if refs.Code != http.StatusOK {
+		t.Fatalf("GET /api/secrets/:id/references status = %d, want %d; body=%s", refs.Code, http.StatusOK, refs.Body.String())
+	}
+	deleteSecret := performRequest(router, http.MethodDelete, "/api/secrets/"+secretID, nil, adminToken)
+	if deleteSecret.Code != http.StatusBadRequest {
+		t.Fatalf("DELETE referenced secret status = %d, want %d; body=%s", deleteSecret.Code, http.StatusBadRequest, deleteSecret.Body.String())
+	}
+
+	createJob := performRequest(router, http.MethodPost, "/api/scheduled-jobs", []byte(`{
+		"name":"Host availability sweep",
+		"type":"host.availability",
+		"cronExpr":"*/5 * * * *",
+		"targetType":"host",
+		"targetId":"all",
+		"timeoutSeconds":60
+	}`), adminToken)
+	if createJob.Code != http.StatusCreated {
+		t.Fatalf("POST /api/scheduled-jobs status = %d, want %d; body=%s", createJob.Code, http.StatusCreated, createJob.Body.String())
+	}
+	jobID := decodeID(t, createJob.Body.Bytes())
+	getJob := performRequest(router, http.MethodGet, "/api/scheduled-jobs/"+jobID, nil, adminToken)
+	if getJob.Code != http.StatusOK {
+		t.Fatalf("GET /api/scheduled-jobs/:id status = %d, want %d; body=%s", getJob.Code, http.StatusOK, getJob.Body.String())
+	}
+}
+
+func TestNotificationLegacyConfigIsSecretized(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+	createChannel := performRequest(router, http.MethodPost, "/api/notifications/channels", []byte(`{
+		"name":"Legacy Telegram",
+		"type":"telegram",
+		"enabled":true,
+		"config":"{\"botToken\":\"legacy-token\",\"chatId\":\"7433377081\"}",
+		"defaultTarget":"7433377081"
+	}`), token)
+	if createChannel.Code != http.StatusCreated {
+		t.Fatalf("POST /api/notifications/channels status = %d, want %d; body=%s", createChannel.Code, http.StatusCreated, createChannel.Body.String())
+	}
+	if bytes.Contains(createChannel.Body.Bytes(), []byte("legacy-token")) {
+		t.Fatalf("legacy config leaked in response: %s", createChannel.Body.String())
+	}
+	channelID := decodeID(t, createChannel.Body.Bytes())
+	var channel model.NotificationChannel
+	if err := database.First(&channel, "id = ?", channelID).Error; err != nil {
+		t.Fatalf("load notification channel: %v", err)
+	}
+	if channel.ConfigSecretID == "" {
+		t.Fatalf("legacy config was not converted to configSecretId")
+	}
+	if channel.ConfigEncrypted != "" {
+		t.Fatalf("legacy config remained in ConfigEncrypted: %q", channel.ConfigEncrypted)
+	}
+}
+
+func TestHighRiskRoutesRequireDedicatedPermissions(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	adminToken := loginAndToken(t, router)
+	createUser := performRequest(router, http.MethodPost, "/api/users", []byte(`{
+		"username":"limited",
+		"password":"plain123456",
+		"displayName":"Limited User",
+		"status":"active"
+	}`), adminToken)
+	if createUser.Code != http.StatusCreated {
+		t.Fatalf("POST /api/users status = %d, want %d; body=%s", createUser.Code, http.StatusCreated, createUser.Body.String())
+	}
+	plainLogin := performRequest(router, http.MethodPost, "/api/auth/login", []byte(`{"username":"limited","password":"plain123456"}`), "")
+	if plainLogin.Code != http.StatusOK {
+		t.Fatalf("plain login status = %d, want %d; body=%s", plainLogin.Code, http.StatusOK, plainLogin.Body.String())
+	}
+	var loginPayload struct {
+		Data struct {
+			Tokens struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(plainLogin.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	for _, target := range []string{
+		"/api/hosts/host-1/test-ssh",
+		"/api/docker/nodes/docker-1/test",
+		"/api/registries/registry-1/test",
+		"/api/nginx/nodes/nginx-1/reload",
+	} {
+		resp := performRequest(router, http.MethodPost, target, nil, loginPayload.Data.Tokens.AccessToken)
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("POST %s status = %d, want %d; body=%s", target, resp.Code, http.StatusForbidden, resp.Body.String())
+		}
+	}
+}
+
 func TestTerminalWebSocketRouteRequiresAuthAndSession(t *testing.T) {
 	t.Parallel()
 
@@ -577,6 +865,22 @@ func loginAndToken(t *testing.T, router http.Handler) string {
 		t.Fatal("login response did not include access token")
 	}
 	return loginPayload.Data.Tokens.AccessToken
+}
+
+func decodeID(t *testing.T, body []byte) string {
+	t.Helper()
+	var payload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode id response: %v; body=%s", err, string(body))
+	}
+	if payload.Data.ID == "" {
+		t.Fatalf("response did not include id; body=%s", string(body))
+	}
+	return payload.Data.ID
 }
 
 func performRequest(handler http.Handler, method string, target string, body []byte, accessToken string) *httptest.ResponseRecorder {

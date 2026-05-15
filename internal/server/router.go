@@ -10,6 +10,7 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/demo"
 	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
+	exportsvc "github.com/Humphrey-He/AegisOps/internal/exporter"
 	"github.com/Humphrey-He/AegisOps/internal/handler"
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	hostsvc "github.com/Humphrey-He/AegisOps/internal/host"
@@ -18,6 +19,7 @@ import (
 	notificationsvc "github.com/Humphrey-He/AegisOps/internal/notification"
 	"github.com/Humphrey-He/AegisOps/internal/rbac"
 	registrysvc "github.com/Humphrey-He/AegisOps/internal/registry"
+	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
 	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
 	servicesvc "github.com/Humphrey-He/AegisOps/internal/service"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
@@ -85,7 +87,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	hostService.SetTaskService(taskService)
 	dockerService := dockersvc.NewService(database, secretService)
 	dockerService.SetTaskService(taskService)
-	notificationService := notificationsvc.NewService(database)
+	notificationService := notificationsvc.NewService(database, secretService)
 	alertService := alertsvc.NewService(database, notificationService)
 	healthCheckService := healthsvc.NewService(database, alertService)
 	hostService.SetHealthCheckService(healthCheckService)
@@ -94,6 +96,12 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	registryService.SetTaskService(taskService)
 	nginxService := nginxsvc.NewService(database, secretService, taskService)
 	nginxService.SetAlertService(alertService)
+	exportService := exportsvc.NewService(database, exportsvc.Options{
+		DBDSN:   cfg.Database.DSN,
+		AppName: cfg.App.Name,
+		AppEnv:  cfg.App.Env,
+	})
+	schedulerService := schedulersvc.NewService(database)
 	var releaseExecutor servicesvc.ReleaseExecutor = servicesvc.NewDockerReleaseExecutor(dockerService)
 	if cfg.App.Env == "test" {
 		releaseExecutor = servicesvc.NoopReleaseExecutor{}
@@ -117,6 +125,9 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	notificationHandler := handler.NewNotificationHandler(notificationService, auditService)
 	alertHandler := handler.NewAlertHandler(alertService, auditService)
 	healthCheckHandler := handler.NewHealthCheckHandler(healthCheckService)
+	exportHandler := handler.NewExportHandler(exportService, auditService)
+	backupHandler := handler.NewBackupHandler(exportService, auditService)
+	schedulerHandler := handler.NewSchedulerHandler(schedulerService, auditService)
 
 	handler.RegisterAuthRoutes(api, authHandler, authMiddleware)
 	handler.RegisterUserRoleAuditRoutes(api, authMiddleware, rbacService, userHandler, roleHandler, auditHandler)
@@ -133,6 +144,9 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	notificationHandler.RegisterRoutes(protected, rbacService)
 	alertHandler.RegisterRoutes(protected, rbacService)
 	healthCheckHandler.RegisterRoutes(protected, rbacService)
+	exportHandler.RegisterRoutes(protected, rbacService)
+	backupHandler.RegisterRoutes(protected, rbacService)
+	schedulerHandler.RegisterRoutes(protected, rbacService)
 
 	return r
 }

@@ -26,7 +26,7 @@ func (h *RegistryHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Servic
 	r.GET("/registries/:id", rbac.RequirePermission(rbacService, "registries.view"), h.Get)
 	r.PATCH("/registries/:id", rbac.RequirePermission(rbacService, "registries.manage"), h.Update)
 	r.DELETE("/registries/:id", rbac.RequirePermission(rbacService, "registries.manage"), h.Delete)
-	r.POST("/registries/:id/test", rbac.RequirePermission(rbacService, "registries.manage"), h.Test)
+	r.POST("/registries/:id/test", rbac.RequirePermission(rbacService, "registries.test"), h.Test)
 	r.GET("/registries/:id/repositories", rbac.RequirePermission(rbacService, "registries.view"), h.Repositories)
 	r.GET("/registries/:id/repositories/:repo/tags", rbac.RequirePermission(rbacService, "registries.view"), h.Tags)
 	r.GET("/registries/:id/repositories/:repo/manifests/:reference", rbac.RequirePermission(rbacService, "registries.view"), h.Manifest)

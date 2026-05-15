@@ -63,6 +63,8 @@ type NotificationChannel struct {
 	Enabled         bool                     `gorm:"not null;default:true;index" json:"enabled"`
 	Language        string                   `gorm:"size:16;not null;default:zh-CN" json:"language"`
 	ConfigEncrypted string                   `gorm:"type:text" json:"-"`
+	PublicConfig    string                   `gorm:"type:text" json:"publicConfig,omitempty"`
+	ConfigSecretID  string                   `gorm:"size:36;index" json:"configSecretId"`
 	Config          string                   `gorm:"-" json:"config,omitempty"`
 	DefaultTarget   string                   `gorm:"size:512" json:"defaultTarget"`
 	LastStatus      NotificationRecordStatus `gorm:"size:32;index" json:"lastStatus"`

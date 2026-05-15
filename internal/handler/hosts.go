@@ -26,7 +26,7 @@ func (h *HostHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
 	r.GET("/hosts/:id", rbac.RequirePermission(rbacService, "hosts.view"), h.Get)
 	r.PATCH("/hosts/:id", rbac.RequirePermission(rbacService, "hosts.manage"), h.Update)
 	r.DELETE("/hosts/:id", rbac.RequirePermission(rbacService, "hosts.manage"), h.Delete)
-	r.POST("/hosts/:id/test-ssh", rbac.RequirePermission(rbacService, "hosts.manage"), h.TestSSH)
+	r.POST("/hosts/:id/test-ssh", rbac.RequirePermission(rbacService, "hosts.test"), h.TestSSH)
 }
 
 func (h *HostHandler) List(c *gin.Context) {

@@ -24,6 +24,8 @@ func (h *SecretHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service)
 	r.GET("/secrets", rbac.RequirePermission(rbacService, "secrets.view"), h.List)
 	r.POST("/secrets", rbac.RequirePermission(rbacService, "secrets.manage"), h.Create)
 	r.GET("/secrets/:id", rbac.RequirePermission(rbacService, "secrets.view"), h.Get)
+	r.GET("/secrets/:id/references", rbac.RequirePermission(rbacService, "secrets.view"), h.References)
+	r.GET("/secrets/:id/read-audits", rbac.RequirePermission(rbacService, "secrets.view"), h.ReadAudits)
 	r.PATCH("/secrets/:id", rbac.RequirePermission(rbacService, "secrets.manage"), h.Update)
 	r.DELETE("/secrets/:id", rbac.RequirePermission(rbacService, "secrets.manage"), h.Delete)
 }
@@ -77,6 +79,25 @@ func (h *SecretHandler) Update(c *gin.Context) {
 	}
 	_ = h.audit.RecordGin(c, audit.Entry{Action: "secret.update", ResourceType: "secret", ResourceID: item.ID, Result: model.AuditResultSuccess})
 	OK(c, item)
+}
+
+func (h *SecretHandler) References(c *gin.Context) {
+	items, err := h.service.References(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	OK(c, gin.H{"items": items, "total": len(items)})
+}
+
+func (h *SecretHandler) ReadAudits(c *gin.Context) {
+	limit, offset := Pagination(c)
+	items, total, err := h.service.ReadAudits(c.Request.Context(), c.Param("id"), limit, offset)
+	if err != nil {
+		Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	OK(c, PageResult{Items: items, Total: total, Limit: limit, Offset: offset})
 }
 
 func (h *SecretHandler) Delete(c *gin.Context) {

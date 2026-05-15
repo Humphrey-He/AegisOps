@@ -41,12 +41,12 @@ func (h *DockerHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service)
 	r.GET("/docker/nodes/:id", rbac.RequirePermission(rbacService, "docker.view"), h.GetNode)
 	r.PATCH("/docker/nodes/:id", rbac.RequirePermission(rbacService, "docker.manage"), h.UpdateNode)
 	r.DELETE("/docker/nodes/:id", rbac.RequirePermission(rbacService, "docker.manage"), h.DeleteNode)
-	r.POST("/docker/nodes/:id/test", rbac.RequirePermission(rbacService, "docker.manage"), h.TestConnection)
+	r.POST("/docker/nodes/:id/test", rbac.RequirePermission(rbacService, "docker.test"), h.TestConnection)
 	r.GET("/docker/nodes/:id/containers", rbac.RequirePermission(rbacService, "docker.view"), h.ListContainers)
 	r.GET("/docker/nodes/:id/containers/:containerId/logs", rbac.RequirePermission(rbacService, "docker.view"), h.ContainerLogs)
-	r.POST("/docker/nodes/:id/containers/:containerId/start", rbac.RequirePermission(rbacService, "docker.manage"), h.StartContainer)
-	r.POST("/docker/nodes/:id/containers/:containerId/stop", rbac.RequirePermission(rbacService, "docker.manage"), h.StopContainer)
-	r.POST("/docker/nodes/:id/containers/:containerId/restart", rbac.RequirePermission(rbacService, "docker.manage"), h.RestartContainer)
+	r.POST("/docker/nodes/:id/containers/:containerId/start", rbac.RequirePermission(rbacService, "docker.operate"), h.StartContainer)
+	r.POST("/docker/nodes/:id/containers/:containerId/stop", rbac.RequirePermission(rbacService, "docker.operate"), h.StopContainer)
+	r.POST("/docker/nodes/:id/containers/:containerId/restart", rbac.RequirePermission(rbacService, "docker.operate"), h.RestartContainer)
 }
 
 func (h *DockerHandler) ListNodes(c *gin.Context) {

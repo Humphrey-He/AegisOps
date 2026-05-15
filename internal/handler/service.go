@@ -32,7 +32,7 @@ func (h *ServiceHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service
 	r.GET("/services/:id/versions", rbac.RequirePermission(rbacService, "services.view"), h.Versions)
 	r.POST("/services/:id/releases", rbac.RequirePermission(rbacService, "services.release"), h.Release)
 	r.POST("/services/:id/upgrades", rbac.RequirePermission(rbacService, "services.release"), h.Upgrade)
-	r.POST("/services/:id/rollbacks", rbac.RequirePermission(rbacService, "services.release"), h.Rollback)
+	r.POST("/services/:id/rollbacks", rbac.RequirePermission(rbacService, "services.rollback"), h.Rollback)
 }
 
 func (h *ServiceHandler) List(c *gin.Context) {

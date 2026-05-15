@@ -43,6 +43,8 @@ func AllModels() []any {
 		&RolePermission{},
 		&AuditLog{},
 		&Secret{},
+		&SecretReference{},
+		&SecretReadAudit{},
 		&Host{},
 		&Task{},
 		&TaskStep{},
@@ -63,5 +65,9 @@ func AllModels() []any {
 		&NotificationRecord{},
 		&ServiceHealthCheck{},
 		&HostAvailabilityCheck{},
+		&ExportJob{},
+		&BackupRecord{},
+		&ScheduledJob{},
+		&TaskDispatch{},
 	}
 }

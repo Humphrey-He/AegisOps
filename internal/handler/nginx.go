@@ -26,13 +26,13 @@ func (h *NginxHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) 
 	r.GET("/nginx/nodes/:id", rbac.RequirePermission(rbacService, "nginx.view"), h.GetNode)
 	r.PATCH("/nginx/nodes/:id", rbac.RequirePermission(rbacService, "nginx.manage"), h.UpdateNode)
 	r.DELETE("/nginx/nodes/:id", rbac.RequirePermission(rbacService, "nginx.manage"), h.DeleteNode)
-	r.POST("/nginx/nodes/:id/test", rbac.RequirePermission(rbacService, "nginx.manage"), h.TestNode)
-	r.POST("/nginx/nodes/:id/reload", rbac.RequirePermission(rbacService, "nginx.manage"), h.ReloadNode)
+	r.POST("/nginx/nodes/:id/test", rbac.RequirePermission(rbacService, "nginx.test"), h.TestNode)
+	r.POST("/nginx/nodes/:id/reload", rbac.RequirePermission(rbacService, "nginx.reload"), h.ReloadNode)
 	r.GET("/nginx/nodes/:id/configs", rbac.RequirePermission(rbacService, "nginx.view"), h.ListConfigs)
 	r.POST("/nginx/nodes/:id/configs", rbac.RequirePermission(rbacService, "nginx.manage"), h.CreateConfig)
 	r.GET("/nginx/configs/:configId", rbac.RequirePermission(rbacService, "nginx.view"), h.GetConfig)
-	r.POST("/nginx/nodes/:id/publish", rbac.RequirePermission(rbacService, "nginx.manage"), h.PublishConfig)
-	r.POST("/nginx/nodes/:id/rollback", rbac.RequirePermission(rbacService, "nginx.manage"), h.Rollback)
+	r.POST("/nginx/nodes/:id/publish", rbac.RequirePermission(rbacService, "nginx.publish"), h.PublishConfig)
+	r.POST("/nginx/nodes/:id/rollback", rbac.RequirePermission(rbacService, "nginx.rollback"), h.Rollback)
 }
 
 func (h *NginxHandler) ListNodes(c *gin.Context) {

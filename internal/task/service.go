@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -138,6 +139,78 @@ func (s *Service) Finish(ctx context.Context, id string, status model.TaskStatus
 		"error":       errMessage,
 		"finished_at": &now,
 	}).Error
+}
+
+func (s *Service) Cancel(ctx context.Context, id string) error {
+	now := time.Now().UTC()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var item model.Task
+		if err := tx.First(&item, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if item.Status == model.TaskStatusSuccess || item.Status == model.TaskStatusFailed || item.Status == model.TaskStatusCanceled {
+			return fmt.Errorf("task is already finished")
+		}
+		if err := tx.Model(&model.Task{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":      model.TaskStatusCanceled,
+			"error":       "canceled by user",
+			"finished_at": &now,
+		}).Error; err != nil {
+			return err
+		}
+		_ = tx.Model(&model.TaskDispatch{}).Where("task_id = ? AND status IN ?", id, []model.TaskDispatchStatus{
+			model.TaskDispatchStatusPending,
+			model.TaskDispatchStatusDispatched,
+			model.TaskDispatchStatusRunning,
+		}).Updates(map[string]interface{}{
+			"status":      model.TaskDispatchStatusCanceled,
+			"finished_at": &now,
+		}).Error
+		return nil
+	})
+}
+
+func (s *Service) Retry(ctx context.Context, id, operatorID string) (*model.Task, error) {
+	var original model.Task
+	if err := s.db.WithContext(ctx).Preload("Steps", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sort_order ASC, created_at ASC")
+	}).First(&original, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	if original.Status != model.TaskStatusFailed && original.Status != model.TaskStatusCanceled {
+		return nil, fmt.Errorf("only failed or canceled tasks can be retried")
+	}
+	steps := make([]CreateStepRequest, 0, len(original.Steps))
+	for _, step := range original.Steps {
+		steps = append(steps, CreateStepRequest{Name: step.Name, SortOrder: step.SortOrder})
+	}
+	task, err := s.Create(ctx, CreateRequest{
+		Type:       original.Type,
+		Title:      original.Title + " retry",
+		TargetType: original.TargetType,
+		TargetID:   original.TargetID,
+		Payload:    original.Payload,
+		CreatedBy:  operatorID,
+		Steps:      steps,
+	})
+	if err != nil {
+		return nil, err
+	}
+	dispatch := model.TaskDispatch{
+		ID:             uuid.NewString(),
+		TaskID:         task.ID,
+		Source:         model.TaskDispatchSourceManual,
+		Status:         model.TaskDispatchStatusPending,
+		RetryCount:     0,
+		MaxRetry:       0,
+		TimeoutSeconds: 300,
+		ConcurrencyKey: original.TargetType + ":" + original.TargetID + ":" + original.Type,
+		QueuedAt:       time.Now().UTC(),
+	}
+	_ = s.db.WithContext(ctx).Create(&dispatch).Error
+	return task, nil
 }
 
 func (s *Service) AddStep(ctx context.Context, taskID, name string, sortOrder int) (*model.TaskStep, error) {

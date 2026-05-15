@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	"github.com/Humphrey-He/AegisOps/internal/secret"
 )
 
 const (
@@ -25,17 +26,20 @@ const (
 
 type Service struct {
 	db         *gorm.DB
+	secrets    *secret.Service
 	httpClient *http.Client
 }
 
 type ChannelRequest struct {
-	Name          string                        `json:"name" binding:"required"`
-	Type          model.NotificationChannelType `json:"type" binding:"required"`
-	Enabled       *bool                         `json:"enabled"`
-	Language      string                        `json:"language"`
-	Config        string                        `json:"config"`
-	DefaultTarget string                        `json:"defaultTarget"`
-	OperatorID    string                        `json:"-"`
+	Name           string                        `json:"name" binding:"required"`
+	Type           model.NotificationChannelType `json:"type" binding:"required"`
+	Enabled        *bool                         `json:"enabled"`
+	Language       string                        `json:"language"`
+	Config         string                        `json:"config"`
+	PublicConfig   string                        `json:"publicConfig"`
+	ConfigSecretID string                        `json:"configSecretId"`
+	DefaultTarget  string                        `json:"defaultTarget"`
+	OperatorID     string                        `json:"-"`
 }
 
 type SendRequest struct {
@@ -65,8 +69,12 @@ type channelConfig struct {
 	To         string `json:"to"`
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: db, httpClient: &http.Client{Timeout: 10 * time.Second}}
+func NewService(db *gorm.DB, secrets ...*secret.Service) *Service {
+	var secretService *secret.Service
+	if len(secrets) > 0 {
+		secretService = secrets[0]
+	}
+	return &Service{db: db, secrets: secretService, httpClient: &http.Client{Timeout: 10 * time.Second}}
 }
 
 func (s *Service) ListChannels(ctx context.Context, limit, offset int) ([]model.NotificationChannel, int64, error) {
@@ -83,7 +91,7 @@ func (s *Service) ListChannels(ctx context.Context, limit, offset int) ([]model.
 		return nil, 0, err
 	}
 	for i := range items {
-		items[i].Config = items[i].ConfigEncrypted
+		items[i].Config = ""
 		items[i].Language = normalizeLanguage(items[i].Language)
 	}
 	return items, total, nil
@@ -94,7 +102,7 @@ func (s *Service) GetChannel(ctx context.Context, id string) (*model.Notificatio
 	if err := s.db.WithContext(ctx).First(&item, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
-	item.Config = item.ConfigEncrypted
+	item.Config = ""
 	item.Language = normalizeLanguage(item.Language)
 	return &item, nil
 }
@@ -104,13 +112,19 @@ func (s *Service) CreateChannel(ctx context.Context, req ChannelRequest) (*model
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	configSecretID, err := s.resolveConfigSecret(ctx, "", req)
+	if err != nil {
+		return nil, err
+	}
 	item := &model.NotificationChannel{
 		ID:              uuid.NewString(),
 		Name:            strings.TrimSpace(req.Name),
 		Type:            req.Type,
 		Enabled:         enabled,
 		Language:        normalizeLanguage(req.Language),
-		ConfigEncrypted: strings.TrimSpace(req.Config),
+		ConfigEncrypted: legacyConfig("", configSecretID),
+		PublicConfig:    strings.TrimSpace(req.PublicConfig),
+		ConfigSecretID:  configSecretID,
 		DefaultTarget:   strings.TrimSpace(req.DefaultTarget),
 		CreatedBy:       req.OperatorID,
 		UpdatedBy:       req.OperatorID,
@@ -124,7 +138,10 @@ func (s *Service) CreateChannel(ctx context.Context, req ChannelRequest) (*model
 	if err := s.db.WithContext(ctx).Create(item).Error; err != nil {
 		return nil, err
 	}
-	item.Config = item.ConfigEncrypted
+	if item.ConfigSecretID != "" && s.secrets != nil {
+		_ = s.secrets.UpsertReference(ctx, item.ConfigSecretID, "notification_channel", item.ID, "config", req.OperatorID)
+	}
+	item.Config = ""
 	return item, nil
 }
 
@@ -148,20 +165,37 @@ func (s *Service) UpdateChannel(ctx context.Context, id string, req ChannelReque
 	if req.Language != "" {
 		item.Language = normalizeLanguage(req.Language)
 	}
-	if req.Config != "" {
-		item.ConfigEncrypted = strings.TrimSpace(req.Config)
+	configSecretID, err := s.resolveConfigSecret(ctx, item.ID, req)
+	if err != nil {
+		return nil, err
+	}
+	if req.PublicConfig != "" {
+		item.PublicConfig = strings.TrimSpace(req.PublicConfig)
+	}
+	if configSecretID != "" {
+		item.ConfigSecretID = configSecretID
+		item.ConfigEncrypted = ""
 	}
 	item.DefaultTarget = strings.TrimSpace(req.DefaultTarget)
 	item.UpdatedBy = req.OperatorID
 	if err := s.db.WithContext(ctx).Save(item).Error; err != nil {
 		return nil, err
 	}
-	item.Config = item.ConfigEncrypted
+	if item.ConfigSecretID != "" && s.secrets != nil {
+		_ = s.secrets.UpsertReference(ctx, item.ConfigSecretID, "notification_channel", item.ID, "config", req.OperatorID)
+	}
+	if item.ConfigSecretID == "" && s.secrets != nil {
+		_ = s.secrets.DeleteReference(ctx, "notification_channel", item.ID, "config")
+	}
+	item.Config = ""
 	item.Language = normalizeLanguage(item.Language)
 	return item, nil
 }
 
 func (s *Service) DeleteChannel(ctx context.Context, id string) error {
+	if s.secrets != nil {
+		_ = s.secrets.DeleteReference(ctx, "notification_channel", id, "config")
+	}
 	return s.db.WithContext(ctx).Delete(&model.NotificationChannel{}, "id = ?", id).Error
 }
 
@@ -249,8 +283,12 @@ func (s *Service) Records(ctx context.Context, limit, offset int) ([]model.Notif
 
 func (s *Service) dispatch(ctx context.Context, channel model.NotificationChannel, req SendRequest) error {
 	var cfg channelConfig
-	if strings.TrimSpace(channel.ConfigEncrypted) != "" {
-		if err := json.Unmarshal([]byte(channel.ConfigEncrypted), &cfg); err != nil {
+	configJSON, err := s.channelConfigJSON(ctx, channel, req)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(configJSON) != "" {
+		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 			return fmt.Errorf("parse channel config: %w", err)
 		}
 	}
@@ -330,6 +368,73 @@ func telegramURL(token string) string {
 		return ""
 	}
 	return "https://api.telegram.org/bot" + token + "/sendMessage"
+}
+
+func (s *Service) channelConfigJSON(ctx context.Context, channel model.NotificationChannel, req SendRequest) (string, error) {
+	if strings.TrimSpace(channel.ConfigSecretID) != "" {
+		if s.secrets == nil {
+			return "", fmt.Errorf("notification channel config secret service is unavailable")
+		}
+		return s.secrets.DecryptValueForUse(ctx, channel.ConfigSecretID, secret.UseContext{
+			ResourceType: "notification_channel",
+			ResourceID:   channel.ID,
+			Action:       "notification.dispatch",
+			TaskID:       req.TaskID,
+		})
+	}
+	return channel.ConfigEncrypted, nil
+}
+
+func legacyConfig(config, secretID string) string {
+	if strings.TrimSpace(secretID) != "" {
+		return ""
+	}
+	return strings.TrimSpace(config)
+}
+
+func (s *Service) resolveConfigSecret(ctx context.Context, channelID string, req ChannelRequest) (string, error) {
+	if strings.TrimSpace(req.ConfigSecretID) != "" {
+		return strings.TrimSpace(req.ConfigSecretID), nil
+	}
+	if strings.TrimSpace(req.Config) == "" {
+		return "", nil
+	}
+	if s.secrets == nil {
+		return "", nil
+	}
+	secretType := model.SecretTypeAPIToken
+	switch req.Type {
+	case model.NotificationChannelTypeWecom:
+		secretType = model.SecretTypeWebhook
+	case model.NotificationChannelTypeEmail:
+		secretType = model.SecretTypeSMTP
+	}
+	nameParts := []string{"notification", string(req.Type), strings.TrimSpace(req.Name)}
+	if channelID != "" {
+		nameParts = append(nameParts, channelID)
+	}
+	created, err := s.secrets.Create(ctx, secret.CreateRequest{
+		Name:        strings.Join(nonEmpty(nameParts...), "-"),
+		Type:        secretType,
+		Purpose:     "notification_channel",
+		Description: "Notification channel sensitive config",
+		Value:       strings.TrimSpace(req.Config),
+		OperatorID:  req.OperatorID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return created.ID, nil
+}
+
+func nonEmpty(values ...string) []string {
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			items = append(items, strings.TrimSpace(value))
+		}
+	}
+	return items
 }
 
 func formatTelegramMessage(req SendRequest, language string) string {
