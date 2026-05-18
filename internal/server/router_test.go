@@ -480,8 +480,25 @@ func TestDashboardRiskAndResourceContext(t *testing.T) {
 	}
 	var contextPayload struct {
 		Data struct {
-			ResourceType string             `json:"resourceType"`
-			ResourceID   string             `json:"resourceId"`
+			ResourceType string `json:"resourceType"`
+			ResourceID   string `json:"resourceId"`
+			Navigation   struct {
+				DetailPath string `json:"detailPath"`
+				TasksPath  string `json:"tasksPath"`
+				AuditsPath string `json:"auditsPath"`
+				AlertsPath string `json:"alertsPath"`
+			} `json:"navigation"`
+			PrimaryAction struct {
+				Key        string `json:"key"`
+				Label      string `json:"label"`
+				Permission string `json:"permission"`
+			} `json:"primaryAction"`
+			Risk struct {
+				Level             string `json:"level"`
+				OpenAlertCount    int64  `json:"openAlertCount"`
+				FailedTaskCount   int64  `json:"failedTaskCount"`
+				LastFailureReason string `json:"lastFailureReason"`
+			} `json:"risk"`
 			RecentTasks  []model.Task       `json:"recentTasks"`
 			RecentAudits []model.AuditLog   `json:"recentAudits"`
 			RecentAlerts []model.AlertEvent `json:"recentAlerts"`
@@ -495,6 +512,164 @@ func TestDashboardRiskAndResourceContext(t *testing.T) {
 	}
 	if len(contextPayload.Data.RecentTasks) != 1 || len(contextPayload.Data.RecentAudits) != 1 || len(contextPayload.Data.RecentAlerts) != 1 {
 		t.Fatalf("resource context lists = tasks:%d audits:%d alerts:%d, want 1 each", len(contextPayload.Data.RecentTasks), len(contextPayload.Data.RecentAudits), len(contextPayload.Data.RecentAlerts))
+	}
+	if contextPayload.Data.Navigation.DetailPath != "/assets/hosts?selected="+host.ID {
+		t.Fatalf("resource detail path = %q, want selected host path", contextPayload.Data.Navigation.DetailPath)
+	}
+	if contextPayload.Data.Navigation.TasksPath == "" || contextPayload.Data.Navigation.AuditsPath == "" || contextPayload.Data.Navigation.AlertsPath == "" {
+		t.Fatalf("resource navigation paths incomplete: %+v", contextPayload.Data.Navigation)
+	}
+	if contextPayload.Data.PrimaryAction.Key != "test_ssh" || contextPayload.Data.PrimaryAction.Permission != "hosts.test" {
+		t.Fatalf("primary action = %+v, want host SSH test", contextPayload.Data.PrimaryAction)
+	}
+	if contextPayload.Data.Risk.Level != "critical" || contextPayload.Data.Risk.OpenAlertCount != 1 || contextPayload.Data.Risk.FailedTaskCount != 1 || contextPayload.Data.Risk.LastFailureReason == "" {
+		t.Fatalf("risk summary = %+v, want critical resource risk", contextPayload.Data.Risk)
+	}
+
+	if err := database.Create(&model.DockerNode{ID: "risk-docker-1", Name: "Risk Docker", Endpoint: "tcp://127.0.0.1:2375", Status: model.DockerNodeStatusOnline}).Error; err != nil {
+		t.Fatalf("create docker node: %v", err)
+	}
+	if err := database.Create(&model.NginxNode{ID: "risk-nginx-1", Name: "Risk Nginx", HostID: host.ID, ConfigPath: "/etc/nginx/nginx.conf", TestCommand: "nginx -t", ReloadCommand: "nginx -s reload", Status: model.NginxNodeStatusOnline}).Error; err != nil {
+		t.Fatalf("create nginx node: %v", err)
+	}
+	if err := database.Create(&model.Registry{ID: "risk-registry-1", Name: "Risk Registry", URL: "http://registry.local:5000", AuthType: model.RegistryAuthTypeNone, Status: model.RegistryStatusOnline}).Error; err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	if err := database.Create(&model.ServiceDefinition{ID: "risk-service-1", Name: "Risk Service", Code: "risk-service", Image: "registry.local/risk/service", Status: model.ServiceStatusActive}).Error; err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	searchResp := performRequest(router, http.MethodGet, "/api/resources/search?keyword=Risk&limit=10", nil, token)
+	if searchResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/resources/search status = %d, want %d; body=%s", searchResp.Code, http.StatusOK, searchResp.Body.String())
+	}
+	var searchPayload struct {
+		Data struct {
+			Items []struct {
+				ResourceType string `json:"resourceType"`
+				ResourceID   string `json:"resourceId"`
+				Name         string `json:"name"`
+				Path         string `json:"path"`
+			} `json:"items"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(searchResp.Body.Bytes(), &searchPayload); err != nil {
+		t.Fatalf("decode resource search: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, item := range searchPayload.Data.Items {
+		if item.Path == "" {
+			t.Fatalf("search item missing path: %+v", item)
+		}
+		seen[item.ResourceType] = true
+	}
+	for _, resourceType := range []string{"host", "docker_node", "nginx_node", "registry", "service"} {
+		if !seen[resourceType] {
+			t.Fatalf("search results missing %s: %+v", resourceType, searchPayload.Data.Items)
+		}
+	}
+}
+
+func TestTaskAndAlertContextCloseTroubleshootingLoop(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	host := model.Host{ID: "context-host-1", Name: "Context Host", Address: "10.0.0.9", SSHPort: 22, SSHUser: "root", SSHSecretID: "secret-1", Status: model.HostStatusOffline}
+	if err := database.Create(&host).Error; err != nil {
+		t.Fatalf("create host: %v", err)
+	}
+	taskItem := model.Task{ID: "context-task-1", Type: "host.ssh.test", Title: "context host ssh", Status: model.TaskStatusFailed, TargetType: "host", TargetID: host.ID, Error: "dial tcp timeout"}
+	if err := database.Create(&taskItem).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := database.Create(&model.TaskStep{ID: "context-step-1", TaskID: taskItem.ID, Name: "connect host", Status: model.TaskStatusFailed, SortOrder: 1, Error: "ssh timeout"}).Error; err != nil {
+		t.Fatalf("create task step: %v", err)
+	}
+	if err := database.Create(&model.TaskLog{ID: "context-log-1", TaskID: taskItem.ID, StepID: "context-step-1", Level: model.TaskLogLevelError, Message: "network unreachable"}).Error; err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+	alertEvent := model.AlertEvent{ID: "context-alert-1", EventType: "host_offline", ResourceType: "host", ResourceID: host.ID, TaskID: taskItem.ID, Severity: model.AlertEventSeverityCritical, Status: model.AlertEventStatusOpen, Summary: "host offline", FirstTriggeredAt: time.Now().UTC(), LastTriggeredAt: time.Now().UTC()}
+	if err := database.Create(&alertEvent).Error; err != nil {
+		t.Fatalf("create alert: %v", err)
+	}
+	if err := database.Create(&model.AuditLog{Username: "admin", Action: "host.test_ssh", ResourceType: "host", ResourceID: host.ID, Result: model.AuditResultFailure, Message: "ssh failed"}).Error; err != nil {
+		t.Fatalf("create audit: %v", err)
+	}
+	if err := database.Create(&model.NotificationRecord{ID: "context-notification-1", EventID: alertEvent.ID, ChannelID: "channel-1", ChannelName: "Telegram", ChannelType: model.NotificationChannelTypeTelegram, Status: model.NotificationRecordStatusSuccess}).Error; err != nil {
+		t.Fatalf("create notification: %v", err)
+	}
+
+	taskContextResp := performRequest(router, http.MethodGet, "/api/tasks/"+taskItem.ID+"/context", nil, token)
+	if taskContextResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/tasks/:id/context status = %d, want %d; body=%s", taskContextResp.Code, http.StatusOK, taskContextResp.Body.String())
+	}
+	var taskPayload struct {
+		Data struct {
+			FailureSummary string                     `json:"failureSummary"`
+			Resource       *map[string]any            `json:"resource"`
+			RelatedAudits  []model.AuditLog           `json:"relatedAudits"`
+			RelatedAlerts  []model.AlertEvent         `json:"relatedAlerts"`
+			Notifications  []model.NotificationRecord `json:"notifications"`
+			NextActions    []struct {
+				Key string `json:"key"`
+			} `json:"nextActions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(taskContextResp.Body.Bytes(), &taskPayload); err != nil {
+		t.Fatalf("decode task context: %v", err)
+	}
+	if taskPayload.Data.FailureSummary != "dial tcp timeout" {
+		t.Fatalf("failure summary = %q, want task error", taskPayload.Data.FailureSummary)
+	}
+	if taskPayload.Data.Resource == nil || len(taskPayload.Data.RelatedAudits) != 1 || len(taskPayload.Data.RelatedAlerts) != 1 || len(taskPayload.Data.Notifications) != 1 {
+		t.Fatalf("task context missing linked data: %+v", taskPayload.Data)
+	}
+	if len(taskPayload.Data.NextActions) == 0 || taskPayload.Data.NextActions[0].Key != "test_ssh" {
+		t.Fatalf("task next actions = %+v, want host test action", taskPayload.Data.NextActions)
+	}
+
+	alertContextResp := performRequest(router, http.MethodGet, "/api/alerts/events/"+alertEvent.ID+"/context", nil, token)
+	if alertContextResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/alerts/events/:id/context status = %d, want %d; body=%s", alertContextResp.Code, http.StatusOK, alertContextResp.Body.String())
+	}
+	var alertPayload struct {
+		Data struct {
+			Task          *model.Task                `json:"task"`
+			Resource      *map[string]any            `json:"resource"`
+			RelatedAudits []model.AuditLog           `json:"relatedAudits"`
+			Notifications []model.NotificationRecord `json:"notifications"`
+			Risk          struct {
+				Level string `json:"level"`
+			} `json:"risk"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(alertContextResp.Body.Bytes(), &alertPayload); err != nil {
+		t.Fatalf("decode alert context: %v", err)
+	}
+	if alertPayload.Data.Task == nil || alertPayload.Data.Task.ID != taskItem.ID {
+		t.Fatalf("alert context task = %+v, want linked task", alertPayload.Data.Task)
+	}
+	if alertPayload.Data.Resource == nil || len(alertPayload.Data.RelatedAudits) != 1 || len(alertPayload.Data.Notifications) != 1 {
+		t.Fatalf("alert context missing linked data: %+v", alertPayload.Data)
+	}
+	if alertPayload.Data.Risk.Level != "critical" {
+		t.Fatalf("alert context risk = %s, want critical", alertPayload.Data.Risk.Level)
 	}
 }
 

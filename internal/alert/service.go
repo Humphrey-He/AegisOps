@@ -169,7 +169,7 @@ func (s *Service) CreateEvent(ctx context.Context, req EventRequest) (*model.Ale
 	return item, nil
 }
 
-func (s *Service) ListEvents(ctx context.Context, status, eventType string, limit, offset int) ([]model.AlertEvent, int64, error) {
+func (s *Service) ListEvents(ctx context.Context, status, eventType, resourceType, resourceID string, limit, offset int) ([]model.AlertEvent, int64, error) {
 	var items []model.AlertEvent
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.AlertEvent{})
@@ -178,6 +178,12 @@ func (s *Service) ListEvents(ctx context.Context, status, eventType string, limi
 	}
 	if eventType != "" {
 		query = query.Where("event_type = ?", eventType)
+	}
+	if resourceType != "" {
+		query = query.Where("resource_type = ?", resourceType)
+	}
+	if resourceID != "" {
+		query = query.Where("resource_id = ?", resourceID)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/Humphrey-He/AegisOps/internal/alert"
 	"github.com/Humphrey-He/AegisOps/internal/audit"
@@ -14,10 +15,22 @@ import (
 type AlertHandler struct {
 	service *alert.Service
 	audit   *audit.Service
+	db      *gorm.DB
 }
 
-func NewAlertHandler(service *alert.Service, auditService *audit.Service) *AlertHandler {
-	return &AlertHandler{service: service, audit: auditService}
+func NewAlertHandler(service *alert.Service, auditService *audit.Service, db *gorm.DB) *AlertHandler {
+	return &AlertHandler{service: service, audit: auditService, db: db}
+}
+
+type AlertEventContext struct {
+	Event         *model.AlertEvent          `json:"event"`
+	Task          *model.Task                `json:"task,omitempty"`
+	Resource      *ResourceSummary           `json:"resource,omitempty"`
+	Navigation    ResourceNavigation         `json:"navigation"`
+	Risk          ResourceRisk               `json:"risk"`
+	RelatedAudits []model.AuditLog           `json:"relatedAudits"`
+	Notifications []model.NotificationRecord `json:"notifications"`
+	NextActions   []ResourceActionHint       `json:"nextActions"`
 }
 
 func (h *AlertHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
@@ -28,6 +41,7 @@ func (h *AlertHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) 
 	r.GET("/alerts/events", rbac.RequirePermission(rbacService, "alerts.view"), h.ListEvents)
 	r.POST("/alerts/events", rbac.RequirePermission(rbacService, "alerts.manage"), h.CreateEvent)
 	r.GET("/alerts/events/:id", rbac.RequirePermission(rbacService, "alerts.view"), h.GetEvent)
+	r.GET("/alerts/events/:id/context", rbac.RequirePermission(rbacService, "alerts.view"), h.Context)
 	r.POST("/alerts/events/:id/ack", rbac.RequirePermission(rbacService, "alerts.ack"), h.AckEvent)
 	r.POST("/alerts/events/:id/resolve", rbac.RequirePermission(rbacService, "alerts.ack"), h.ResolveEvent)
 	r.GET("/alerts/records", rbac.RequirePermission(rbacService, "alerts.view"), h.Records)
@@ -86,7 +100,15 @@ func (h *AlertHandler) DeleteRule(c *gin.Context) {
 
 func (h *AlertHandler) ListEvents(c *gin.Context) {
 	limit, offset := Pagination(c)
-	items, total, err := h.service.ListEvents(c.Request.Context(), c.Query("status"), c.Query("eventType"), limit, offset)
+	items, total, err := h.service.ListEvents(
+		c.Request.Context(),
+		c.Query("status"),
+		c.Query("eventType"),
+		c.Query("resourceType"),
+		c.Query("resourceId"),
+		limit,
+		offset,
+	)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -116,6 +138,60 @@ func (h *AlertHandler) GetEvent(c *gin.Context) {
 		return
 	}
 	OK(c, item)
+}
+
+func (h *AlertHandler) Context(c *gin.Context) {
+	event, err := h.service.GetEvent(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusNotFound, err.Error())
+		return
+	}
+	resourceType := normalizeResourceType(event.ResourceType)
+	result := AlertEventContext{
+		Event: event,
+	}
+	if resourceType != "" && event.ResourceID != "" {
+		result.Navigation = resourceNavigation(resourceType, event.ResourceID)
+		summary, err := resourceSummaryByDB(c.Request.Context(), h.db, resourceType, event.ResourceID)
+		if err == nil {
+			result.Resource = summary
+			result.NextActions = resourceActionHints(resourceType, summary.Status, event.ResourceID)
+		}
+		risk, err := resourceRiskByDB(c.Request.Context(), h.db, resourceType, event.ResourceID)
+		if err != nil {
+			Error(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		result.Risk = risk
+		if err := h.db.WithContext(c.Request.Context()).Where("resource_type = ? AND resource_id = ?", resourceType, event.ResourceID).
+			Order("created_at desc").
+			Limit(10).
+			Find(&result.RelatedAudits).Error; err != nil {
+			Error(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if event.TaskID != "" {
+		var taskItem model.Task
+		if err := h.db.WithContext(c.Request.Context()).Preload("Steps", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC, created_at ASC")
+		}).Preload("Logs", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at ASC")
+		}).First(&taskItem, "id = ?", event.TaskID).Error; err != nil && err != gorm.ErrRecordNotFound {
+			Error(c, http.StatusInternalServerError, err.Error())
+			return
+		} else if err == nil {
+			result.Task = &taskItem
+		}
+	}
+	if err := h.db.WithContext(c.Request.Context()).Where("event_id = ?", event.ID).
+		Order("created_at desc").
+		Limit(10).
+		Find(&result.Notifications).Error; err != nil {
+		Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	OK(c, result)
 }
 
 func (h *AlertHandler) AckEvent(c *gin.Context) {
