@@ -11,6 +11,7 @@ export type ResourceActivityItem = {
 
 type ResourceActivityListProps = {
   title: string;
+  helper?: string;
   actionLabel?: string;
   onActionClick?: () => void;
   items: ResourceActivityItem[];
@@ -19,6 +20,7 @@ type ResourceActivityListProps = {
 
 export function ResourceActivityList({
   title,
+  helper,
   actionLabel,
   onActionClick,
   items,
@@ -27,7 +29,10 @@ export function ResourceActivityList({
   return (
     <div className="resource-detail-section">
       <div className="page-toolbar">
-        <Typography.Text strong>{title}</Typography.Text>
+        <Space direction="vertical" size={2}>
+          <Typography.Text strong>{title}</Typography.Text>
+          {helper ? <Typography.Text type="secondary">{helper}</Typography.Text> : null}
+        </Space>
         {actionLabel && onActionClick ? (
           <Button type="link" size="small" onClick={onActionClick}>
             {actionLabel}

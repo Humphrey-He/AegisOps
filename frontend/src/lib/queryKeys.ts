@@ -30,6 +30,7 @@ export const queryKeys = {
   nginxNode: (nodeId: string) => ["nginxNode", nodeId] as const,
   nginxConfigs: (nodeId: string) => ["nginxConfigs", nodeId] as const,
   nginxOperations: (nodeId: string) => ["nginxOperations", nodeId] as const,
+  resourceContext: (resourceType: string, resourceId: string) => ["resourceContext", resourceType, resourceId] as const,
   containers: (nodeId: string) => ["containers", nodeId] as const,
   containerLogs: (containerId: string) => ["containerLogs", containerId] as const,
   hostAvailability: (hostId: string) => ["hostAvailability", hostId] as const,

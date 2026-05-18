@@ -1,5 +1,6 @@
 import {
   App as AntApp,
+  Alert,
   Button,
   Card,
   Form,
@@ -12,7 +13,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { alertsApi, auditsApi, hostAvailabilityApi, hostsApi, secretsApi, tasksApi, terminalApi } from "../../lib/api";
+import { hostAvailabilityApi, hostsApi, resourcesApi, secretsApi, terminalApi } from "../../lib/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
@@ -25,7 +26,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { formatDateTime } from "../../lib/format";
-import { auditMatchesResource, buildAuditsPath, buildTasksPath, taskMatchesResource } from "../../lib/resourceNavigation";
+import { buildAuditsPath, buildTasksPath } from "../../lib/resourceNavigation";
 import { TaskStatus } from "../../components/TaskStatus";
 import type { Host, HostInput } from "../../types/models";
 
@@ -58,14 +59,6 @@ export function HostsPage() {
     queryKey: queryKeys.secrets(""),
     queryFn: () => secretsApi.list(""),
   });
-  const tasksQuery = useQuery({
-    queryKey: queryKeys.tasks,
-    queryFn: () => tasksApi.list(),
-  });
-  const auditsQuery = useQuery({
-    queryKey: queryKeys.audits,
-    queryFn: () => auditsApi.list(),
-  });
   const hostDetailQuery = useQuery({
     queryKey: queryKeys.host(selectedHostId),
     queryFn: () => hostsApi.detail(selectedHostId),
@@ -76,9 +69,9 @@ export function HostsPage() {
     queryFn: () => hostAvailabilityApi.list(selectedHostId),
     enabled: Boolean(selectedHostId),
   });
-  const alertEventsQuery = useQuery({
-    queryKey: [...queryKeys.alertEvents, "host", selectedHostId],
-    queryFn: () => alertsApi.listEvents(),
+  const resourceContextQuery = useQuery({
+    queryKey: queryKeys.resourceContext("host", selectedHostId),
+    queryFn: () => resourcesApi.context("host", selectedHostId),
     enabled: Boolean(selectedHostId),
   });
 
@@ -103,12 +96,13 @@ export function HostsPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["hosts"] }),
         selectedHostId ? queryClient.invalidateQueries({ queryKey: queryKeys.host(selectedHostId) }) : Promise.resolve(),
-        queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.resourceContext("host", selectedHostId) }),
       ]);
-      if (result.taskId) {
-        navigate(`/tasks/${result.taskId}`);
-      }
-      setLatestActionText("已发起一次 SSH 连通性检测。");
+      setLatestActionText(
+        result.taskId
+          ? `已发起一次 SSH 连通性检测，任务 ${result.taskId} 可在当前资源任务中继续跟踪。`
+          : "已发起一次 SSH 连通性检测。",
+      );
       await message.success("SSH 测试已完成");
     },
     onError: (error) => {
@@ -135,25 +129,21 @@ export function HostsPage() {
     if (!selectedHost) {
       return [];
     }
-    return (tasksQuery.data ?? [])
-      .filter((task) => taskMatchesResource(task, "host", selectedHost.id, [selectedHost.name, selectedHost.address]))
-      .slice(0, 5);
-  }, [selectedHost, tasksQuery.data]);
+    return (resourceContextQuery.data?.recentTasks ?? []).slice(0, 5);
+  }, [resourceContextQuery.data?.recentTasks, selectedHost]);
   const relatedAudits = useMemo(() => {
     if (!selectedHost) {
       return [];
     }
-    return (auditsQuery.data ?? [])
-      .filter((audit) => auditMatchesResource(audit, "host", selectedHost.id, [selectedHost.name, selectedHost.address]))
-      .slice(0, 5);
-  }, [auditsQuery.data, selectedHost]);
+    return (resourceContextQuery.data?.recentAudits ?? []).slice(0, 5);
+  }, [resourceContextQuery.data?.recentAudits, selectedHost]);
   const hostAvailability = hostAvailabilityQuery.data ?? [];
   const hostAlertEvents = useMemo(() => {
     if (!selectedHost) {
       return [];
     }
-    return (alertEventsQuery.data ?? []).filter((item) => item.resourceType === "host" && item.resourceId === selectedHost.id);
-  }, [alertEventsQuery.data, selectedHost]);
+    return resourceContextQuery.data?.recentAlerts ?? [];
+  }, [resourceContextQuery.data?.recentAlerts, selectedHost]);
   const latestAvailability = hostAvailability[0] ?? null;
   const latestHostAlert = hostAlertEvents[0] ?? null;
   const latestOfflineCheck = hostAvailability.find((item) => item.status === "UNREACHABLE") ?? null;
@@ -168,6 +158,28 @@ export function HostsPage() {
     return count;
   }, [hostAvailability]);
   const primaryAction = selectedHost?.status === "HEALTHY" ? "terminal" : "test";
+  const hostSummaryItems = [
+    {
+      label: "主机总数",
+      value: hostsQuery.data?.length ?? 0,
+      helper: keyword ? `当前按关键词“${keyword}”过滤` : "当前主机资产清单",
+    },
+    {
+      label: "健康主机",
+      value: (hostsQuery.data ?? []).filter((host) => host.status === "HEALTHY").length,
+      helper: "最近一次检测结果为正常",
+    },
+    {
+      label: "异常主机",
+      value: (hostsQuery.data ?? []).filter((host) => host.status === "UNREACHABLE").length,
+      helper: "建议优先查看最近离线和告警状态",
+    },
+    {
+      label: "未知 / 测试中",
+      value: (hostsQuery.data ?? []).filter((host) => host.status === "UNKNOWN" || host.status === "TESTING").length,
+      helper: "通常意味着仍需确认可达性",
+    },
+  ];
 
   if (hostsQuery.isError) {
     return <ErrorState message={hostsQuery.error.message} onRetry={() => void hostsQuery.refetch()} />;
@@ -179,6 +191,7 @@ export function HostsPage() {
         <PageHeader
           title="主机"
           description="统一管理主机接入、SSH 检测与浏览器终端入口。"
+          eyebrow="运行资源 / 主机工作台"
           extra={
             <PermissionGuard permission="hosts.manage">
               <Button
@@ -195,6 +208,18 @@ export function HostsPage() {
             </PermissionGuard>
           }
         />
+
+        <Card className="page-card">
+          <div className="workbench-summary-grid">
+            {hostSummaryItems.map((item) => (
+              <div key={item.label} className="workbench-summary-card">
+                <Typography.Text className="workbench-summary-label">{item.label}</Typography.Text>
+                <div className="workbench-summary-value">{item.value}</div>
+                <div className="workbench-summary-helper">{item.helper}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
 
         <Card className="page-card">
           <div className="page-toolbar">
@@ -285,13 +310,41 @@ export function HostsPage() {
           <div className="resource-detail-pane">
             <ResourceDetailPanel
               title={selectedHost?.name}
+              kicker={selectedHost ? "主机上下文" : undefined}
               subtitle={selectedHost ? `${selectedHost.address}:${selectedHost.port}` : undefined}
               status={selectedHost ? <StatusBadge status={selectedHost.status} /> : undefined}
+              helper={
+                selectedHost
+                  ? "围绕当前主机集中查看接入状态、最近检测、告警信号与执行入口，减少在任务、终端和审计之间来回切换。"
+                  : undefined
+              }
+              highlights={
+                selectedHost
+                  ? [
+                      {
+                        label: "最近检测",
+                        value: selectedHost.lastCheckedAt ? formatDateTime(selectedHost.lastCheckedAt) : "--",
+                        helper: latestAvailability ? `最近结果 ${latestAvailability.status}` : "尚未记录检测结果",
+                      },
+                      {
+                        label: "连续失败",
+                        value: consecutiveFailureCount || 0,
+                        helper: consecutiveFailureCount > 0 ? "建议优先执行 SSH 测试或查看终端" : "当前没有连续失败记录",
+                      },
+                      {
+                        label: "待处理信号",
+                        value: hostAlertEvents.filter((item) => item.status !== "RESOLVED").length,
+                        helper: latestHostAlert
+                          ? `最近告警 ${formatDateTime(latestHostAlert.lastTriggeredAt)}`
+                          : "当前没有关联告警",
+                      },
+                    ]
+                  : []
+              }
               meta={
                 selectedHost
                   ? [
                       { label: "绑定凭证", value: selectedSecretName },
-                      { label: "最近检测", value: selectedHost.lastCheckedAt ? formatDateTime(selectedHost.lastCheckedAt) : "--" },
                       {
                         label: "最近可用性",
                         value: latestAvailability ? <StatusBadge status={latestAvailability.status} /> : "--",
@@ -326,48 +379,74 @@ export function HostsPage() {
               }
               actions={
                 selectedHost ? (
-                  <Space wrap>
-                    <PermissionGuard permission="hosts.test">
-                      <Button
-                        type={primaryAction === "test" ? "primary" : "default"}
-                        loading={testMutation.isPending}
-                        onClick={() => {
-                          setLatestActionText("正在执行 SSH 连通性检测...");
-                          testMutation.mutate(selectedHost.id);
-                        }}
-                      >
-                        SSH 测试
+                  <>
+                    <div className="resource-action-group">
+                      <PermissionGuard permission="hosts.test">
+                        <Button
+                          type={primaryAction === "test" ? "primary" : "default"}
+                          loading={testMutation.isPending}
+                          onClick={() => {
+                            setLatestActionText("正在执行 SSH 连通性检测...");
+                            testMutation.mutate(selectedHost.id);
+                          }}
+                        >
+                          SSH 测试
+                        </Button>
+                      </PermissionGuard>
+                      <PermissionGuard permission="terminal.open">
+                        <Button
+                          type={primaryAction === "terminal" ? "primary" : "default"}
+                          onClick={async () => {
+                            setLatestActionText("正在创建终端会话...");
+                            const session = await hostsToTerminal(selectedHost.id);
+                            navigate(`/terminal/${session}`);
+                          }}
+                        >
+                          打开终端
+                        </Button>
+                      </PermissionGuard>
+                    </div>
+                    <div className="resource-action-group">
+                      <Button onClick={() => navigate(buildTasksPath({ resourceType: "host", resourceId: selectedHost.id }))}>
+                        查看任务
                       </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="terminal.open">
-                      <Button
-                        type={primaryAction === "terminal" ? "primary" : "default"}
-                        onClick={async () => {
-                          setLatestActionText("正在创建终端会话...");
-                          const session = await hostsToTerminal(selectedHost.id);
-                          navigate(`/terminal/${session}`);
-                        }}
-                      >
-                        打开终端
+                      <Button onClick={() => navigate(buildAuditsPath({ resourceType: "host", resourceId: selectedHost.id }))}>
+                        查看审计
                       </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="hosts.manage">
-                      <Button
-                        onClick={() => {
-                          setEditingHost(selectedHost);
-                          form.setFieldsValue(selectedHost);
-                          setDrawerOpen(true);
-                        }}
-                      >
-                        编辑
-                      </Button>
-                    </PermissionGuard>
-                  </Space>
+                      <PermissionGuard permission="hosts.manage">
+                        <Button
+                          onClick={() => {
+                            setEditingHost(selectedHost);
+                            form.setFieldsValue(selectedHost);
+                            setDrawerOpen(true);
+                          }}
+                        >
+                          编辑
+                        </Button>
+                      </PermissionGuard>
+                    </div>
+                  </>
                 ) : undefined
               }
             >
-              {latestActionText ? (
+              {selectedHost && latestHostAlert?.status === "OPEN" ? (
                 <div className="resource-detail-section">
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={`当前主机存在待处理告警：${latestHostAlert.summary || latestHostAlert.eventType}`}
+                    description={latestHostAlert.detail || "建议先确认 SSH 可达性，再结合最近任务和审计判断是否为持续性异常。"}
+                    action={
+                      <Button size="small" onClick={() => navigate("/alerts/events")}>
+                        查看告警
+                      </Button>
+                    }
+                  />
+                </div>
+              ) : null}
+
+              {latestActionText ? (
+                <div className="resource-detail-section resource-callout">
                   <Typography.Text type="secondary">{latestActionText}</Typography.Text>
                 </div>
               ) : null}
@@ -405,6 +484,7 @@ export function HostsPage() {
 
               <ResourceActivityList
                 title="最近任务"
+                helper="优先看失败、执行中和最近触发的任务，判断这台主机刚发生了什么。"
                 actionLabel={selectedHost ? "进入任务中心" : undefined}
                 onActionClick={
                   selectedHost
@@ -429,6 +509,7 @@ export function HostsPage() {
 
               <ResourceActivityList
                 title="最近审计"
+                helper="操作审计能帮助你确认异常是否由刚刚发生的变更触发。"
                 actionLabel={selectedHost ? "查看全部审计" : undefined}
                 onActionClick={
                   selectedHost

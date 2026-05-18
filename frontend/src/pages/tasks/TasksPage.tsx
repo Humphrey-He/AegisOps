@@ -1,9 +1,10 @@
-import { App as AntApp, Button, Card, Input, Select, Space, Tag, Typography } from "antd";
+import { Alert, App as AntApp, Button, Card, Input, Select, Space, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { DataTable } from "../../components/DataTable";
 import { DangerConfirm } from "../../components/DangerConfirm";
+import { EmptyState } from "../../components/EmptyState";
 import { PageHeader } from "../../components/PageHeader";
 import { PermissionActionButton } from "../../components/PermissionActionButton";
 import { PermissionGuard } from "../../components/PermissionGuard";
@@ -11,17 +12,26 @@ import { TaskStatus } from "../../components/TaskStatus";
 import { tasksApi } from "../../lib/api";
 import { getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
-import { buildResourcePath, formatTaskResourceName, getResourceTypeLabel, normalizeResourceType } from "../../lib/resourceNavigation";
-import { formatTaskExecutionPolicy, getTaskDispatchSourceMeta, taskDispatchSourceOptions } from "../../lib/taskPresentation";
 import { queryKeys } from "../../lib/queryKeys";
+import {
+  buildResourcePath,
+  formatTaskResourceName,
+  getResourceTypeLabel,
+  normalizeResourceType,
+} from "../../lib/resourceNavigation";
+import {
+  formatTaskExecutionPolicy,
+  getTaskDispatchSourceMeta,
+  taskDispatchSourceOptions,
+} from "../../lib/taskPresentation";
 import type { Task } from "../../types/models";
 
 const statusOptions: Array<{ label: string; value: Task["status"] }> = [
-  { label: "运行中", value: "RUNNING" },
-  { label: "待执行", value: "PENDING" },
-  { label: "成功", value: "SUCCESS" },
-  { label: "失败", value: "FAILED" },
-  { label: "已取消", value: "CANCELED" },
+  { label: "Running", value: "RUNNING" },
+  { label: "Pending", value: "PENDING" },
+  { label: "Success", value: "SUCCESS" },
+  { label: "Failed", value: "FAILED" },
+  { label: "Canceled", value: "CANCELED" },
 ];
 
 export function TasksPage() {
@@ -135,8 +145,48 @@ export function TasksPage() {
   const failedCount = filteredData.filter((task) => task.status === "FAILED" || task.status === "CANCELED").length;
   const scheduledCount = filteredData.filter((task) => task.dispatchSource === "SCHEDULED").length;
   const systemCount = filteredData.filter((task) => task.dispatchSource === "SYSTEM").length;
-
+  const successCount = filteredData.filter((task) => task.status === "SUCCESS").length;
+  const selectedResourceTaskCount = filteredData.filter((task) => Boolean(task.resourceType || task.resourceId)).length;
   const resourcePath = buildResourcePath(resourceTypeFilter, resourceIdFilter);
+  const queuePressure = runningCount > 0 ? "当前仍有任务排队或执行中，建议按状态和资源维度继续追踪执行链路。" : null;
+  const failurePressure =
+    failedCount > 0 ? `当前结果内有 ${failedCount} 条失败或已取消任务，可优先评估重试或回到资源上下文查原因。` : null;
+
+  const summaryItems = [
+    {
+      label: "当前结果集",
+      value: filteredData.length,
+      helper:
+        keyword || statusFilter || taskTypeFilter || resourceTypeFilter || resourceIdFilter || dispatchSourceFilter
+          ? "已按当前筛选条件收敛任务范围"
+          : "当前任务中心显示的全部任务",
+    },
+    {
+      label: "运行中 / 待执行",
+      value: runningCount,
+      helper: "优先判断执行链路是否卡在调度、连接或资源检查阶段",
+    },
+    {
+      label: "失败 / 已取消",
+      value: failedCount,
+      helper: "这部分任务更适合优先排查原因或执行重试",
+    },
+    {
+      label: "定时 / 系统触发",
+      value: `${scheduledCount} / ${systemCount}`,
+      helper: "用于区分人工操作与自动化入口的任务压力",
+    },
+    {
+      label: "已成功任务",
+      value: successCount,
+      helper: "可作为最近一段执行链路是否恢复正常的参考面",
+    },
+    {
+      label: "资源关联",
+      value: selectedResourceTaskCount,
+      helper: "当前结果中带有明确资源上下文的任务数量",
+    },
+  ];
 
   function setFilter(key: string, value?: string) {
     setSearchParams((previous) => {
@@ -178,6 +228,7 @@ export function TasksPage() {
         <PageHeader
           title="任务中心"
           description="在这里按来源、状态、资源维度追踪执行链路，并直接处理取消与重试。"
+          eyebrow="执行链路 / 任务工作台"
           extra={
             <Space wrap>
               {resourcePath ? <Button onClick={() => navigate(resourcePath)}>回到资源</Button> : null}
@@ -187,32 +238,31 @@ export function TasksPage() {
         />
 
         <Card className="page-card">
-          <div className="metric-grid" style={{ marginBottom: 16 }}>
-            <Card size="small">
-              <Typography.Text type="secondary">当前结果集</Typography.Text>
-              <Typography.Title level={4} style={{ margin: "8px 0 0" }}>
-                {filteredData.length}
-              </Typography.Title>
-            </Card>
-            <Card size="small">
-              <Typography.Text type="secondary">运行中 / 待执行</Typography.Text>
-              <Typography.Title level={4} style={{ margin: "8px 0 0" }}>
-                {runningCount}
-              </Typography.Title>
-            </Card>
-            <Card size="small">
-              <Typography.Text type="secondary">失败 / 已取消</Typography.Text>
-              <Typography.Title level={4} style={{ margin: "8px 0 0" }}>
-                {failedCount}
-              </Typography.Title>
-            </Card>
-            <Card size="small">
-              <Typography.Text type="secondary">定时 / 系统触发</Typography.Text>
-              <Typography.Title level={4} style={{ margin: "8px 0 0" }}>
-                {scheduledCount} / {systemCount}
-              </Typography.Title>
-            </Card>
+          <div className="workbench-summary-grid">
+            {summaryItems.map((item) => (
+              <div key={item.label} className="workbench-summary-card">
+                <Typography.Text className="workbench-summary-label">{item.label}</Typography.Text>
+                <div className="workbench-summary-value">{item.value}</div>
+                <div className="workbench-summary-helper">{item.helper}</div>
+              </div>
+            ))}
           </div>
+        </Card>
+
+        {queuePressure || failurePressure ? (
+          <Card className="page-card">
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              {queuePressure ? (
+                <Alert type="info" showIcon message="执行队列仍有压力" description={queuePressure} />
+              ) : null}
+              {failurePressure ? (
+                <Alert type="warning" showIcon message="当前结果包含异常任务" description={failurePressure} />
+              ) : null}
+            </Space>
+          </Card>
+        ) : null}
+
+        <Card className="page-card">
           <div className="page-toolbar">
             <div className="page-toolbar-start">
               <Input.Search
@@ -271,6 +321,15 @@ export function TasksPage() {
             rowKey="id"
             loading={tasksQuery.isLoading}
             dataSource={filteredData}
+            locale={{
+              emptyText: (
+                <EmptyState
+                  title="当前筛选条件下没有任务"
+                  description="可以放宽状态、资源或关键词筛选，也可以从具体资源工作台回看相关动作是否已进入队列。"
+                  action={<Button onClick={clearFilters}>清空筛选</Button>}
+                />
+              ),
+            }}
             columns={[
               {
                 title: "任务",

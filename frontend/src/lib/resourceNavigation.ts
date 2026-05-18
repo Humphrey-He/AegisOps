@@ -11,6 +11,12 @@ type PathFilter = ResourceFilter & {
   result?: string;
 };
 
+type AlertPathFilter = ResourceFilter & {
+  status?: string;
+  eventType?: string;
+  selected?: string;
+};
+
 function setIfPresent(params: URLSearchParams, key: string, value?: string) {
   if (value) {
     params.set(key, value);
@@ -103,6 +109,17 @@ export function buildAuditsPath(filters: PathFilter = {}) {
   setIfPresent(params, "resourceId", filters.resourceId);
   const query = params.toString();
   return query ? `/audits?${query}` : "/audits";
+}
+
+export function buildAlertEventsPath(filters: AlertPathFilter = {}) {
+  const params = new URLSearchParams();
+  setIfPresent(params, "status", filters.status);
+  setIfPresent(params, "eventType", filters.eventType);
+  setIfPresent(params, "resourceType", filters.resourceType);
+  setIfPresent(params, "resourceId", filters.resourceId);
+  setIfPresent(params, "selected", filters.selected);
+  const query = params.toString();
+  return query ? `/alerts/events?${query}` : "/alerts/events";
 }
 
 export function buildResourcePath(resourceType?: string, resourceId?: string) {

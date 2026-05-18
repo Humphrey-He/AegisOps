@@ -537,6 +537,7 @@ export type SetupStatus = {
 
 export type AuthSession = {
   token: string;
+  refreshToken?: string;
   user: User;
   permissions: string[];
 };

@@ -1,16 +1,32 @@
 import {
+  BellOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SafetyCertificateOutlined,
+  SearchOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Avatar, Breadcrumb, Button, Dropdown, Layout, Menu, Space, Typography, App as AntApp } from "antd";
+import {
+  App as AntApp,
+  Avatar,
+  Breadcrumb,
+  Button,
+  Dropdown,
+  Layout,
+  Menu,
+  Select,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import type { MenuProps } from "antd";
 import { useMemo, useState } from "react";
 import { Link, Outlet, useLocation, useMatches, useNavigate } from "react-router-dom";
-import { authApi } from "../lib/api";
 import { filterNavItems, navItems, type NavItem } from "../app/navigation";
+import { authApi } from "../lib/api";
+import { USE_MOCK } from "../lib/config";
 import { useSessionStore } from "../store/sessionStore";
 
 const { Header, Sider, Content } = Layout;
@@ -19,9 +35,16 @@ function toMenuItems(items: NavItem[]): MenuProps["items"] {
   return items.map((item) => ({
     key: item.key,
     icon: item.icon,
+    title: item.label,
     label: item.children ? item.label : <Link to={item.key}>{item.label}</Link>,
     children: item.children ? toMenuItems(item.children) : undefined,
   }));
+}
+
+function flattenNavItems(items: NavItem[]): Array<{ key: string; label: string }> {
+  return items.flatMap((item) =>
+    item.children?.length ? flattenNavItems(item.children) : [{ key: item.key, label: item.label }],
+  );
 }
 
 function findSelectedKey(pathname: string, items: NavItem[]): string {
@@ -38,13 +61,19 @@ export function AppShell() {
   const matches = useMatches();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const [quickJumpKeyword, setQuickJumpKeyword] = useState("");
 
   const visibleNavItems = useMemo(() => filterNavItems(navItems, permissions), [permissions]);
   const menuItems = useMemo(() => toMenuItems(visibleNavItems), [visibleNavItems]);
+  const quickJumpOptions = useMemo(
+    () => flattenNavItems(visibleNavItems).map((item) => ({ value: item.key, label: item.label })),
+    [visibleNavItems],
+  );
   const selectedKey = findSelectedKey(location.pathname, visibleNavItems);
 
   const breadcrumbItems = matches
     .filter((match) => (match.handle as { title?: string } | undefined)?.title)
+    .slice(-3)
     .map((match) => ({
       title: <span>{(match.handle as { title: string }).title}</span>,
     }));
@@ -69,47 +98,94 @@ export function AppShell() {
     },
   ];
 
+  const environmentLabel = USE_MOCK ? "Demo" : "Production";
+  const environmentTone = USE_MOCK ? "gold" : "green";
+  const connectionLabel = USE_MOCK ? "Mock 数据源" : "API 已连接";
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider trigger={null} collapsible collapsed={collapsed} width={248} theme="light">
-        <div style={{ padding: 20, display: "flex", alignItems: "center", gap: 12 }}>
+      <Sider
+        trigger={null}
+        collapsible
+        collapsed={collapsed}
+        width={248}
+        theme="light"
+        className="app-shell-sider"
+      >
+        <Link to="/dashboard" className="app-shell-brand">
           <Avatar icon={<SafetyCertificateOutlined />} style={{ background: "#0f766e" }} />
           {!collapsed ? (
-            <Space direction="vertical" size={0}>
+            <div className="app-shell-brand-meta">
               <Typography.Text strong>AegisOps</Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                运维控制台
-              </Typography.Text>
-            </Space>
+              <Typography.Text className="app-shell-brand-text">企业级运维控制台</Typography.Text>
+              <Tag color={environmentTone} className="app-shell-env-tag">
+                {environmentLabel}
+              </Tag>
+            </div>
           ) : null}
-        </div>
+        </Link>
+
         <Menu
           mode="inline"
+          inlineCollapsed={collapsed}
           selectedKeys={[selectedKey]}
           defaultOpenKeys={["assets", "docker", "delivery", "alerts", "settings", "system"]}
           items={menuItems}
+          style={{ borderInlineEnd: 0 }}
         />
       </Sider>
+
       <Layout>
-        <Header
-          style={{
-            padding: "0 20px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            background: "#ffffff",
-            borderBottom: "1px solid #e5e7eb",
-          }}
-        >
-          <Space>
-            <Button
-              type="text"
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={() => setCollapsed((value) => !value)}
-            />
-            <Breadcrumb items={breadcrumbItems} />
+        <Header className="app-shell-header">
+          <Space size={16} style={{ minWidth: 0, flex: 1 }}>
+            <Tooltip title={collapsed ? "展开导航" : "收起导航"}>
+              <Button
+                type="text"
+                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setCollapsed((value) => !value)}
+              />
+            </Tooltip>
+            <div style={{ minWidth: 0, overflow: "hidden" }}>
+              <Breadcrumb items={breadcrumbItems} />
+            </div>
           </Space>
-          <Space size={16}>
+
+          <Space size={12} wrap>
+            <Select
+              showSearch
+              allowClear
+              value={undefined}
+              searchValue={quickJumpKeyword}
+              placeholder="快速跳转"
+              style={{ width: 240 }}
+              suffixIcon={<SearchOutlined />}
+              options={quickJumpOptions}
+              optionFilterProp="label"
+              onSearch={setQuickJumpKeyword}
+              onBlur={() => setQuickJumpKeyword("")}
+              onClear={() => setQuickJumpKeyword("")}
+              onSelect={(value) => {
+                setQuickJumpKeyword("");
+                if (typeof value === "string" && value) {
+                  navigate(value);
+                }
+              }}
+              filterOption={(input, option) =>
+                String(option?.label ?? "")
+                  .toLowerCase()
+                  .includes(input.toLowerCase())
+              }
+            />
+
+            <div className="shell-utility">
+              <span className="shell-utility-dot" aria-hidden />
+              <span>{connectionLabel}</span>
+            </div>
+
+            <Tooltip title="告警中心">
+              <Button type="text" icon={<BellOutlined />} onClick={() => navigate("/alerts/events")} />
+            </Tooltip>
+
             <Dropdown menu={{ items: userMenu }} placement="bottomRight">
               <Space style={{ cursor: "pointer" }}>
                 <Avatar size="small" icon={<UserOutlined />} />
@@ -118,7 +194,8 @@ export function AppShell() {
             </Dropdown>
           </Space>
         </Header>
-        <Content style={{ padding: 20 }}>
+
+        <Content className="app-shell-content">
           <Outlet />
         </Content>
       </Layout>

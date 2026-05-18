@@ -1,12 +1,12 @@
 import {
-  AuditOutlined,
   AppstoreOutlined,
+  AuditOutlined,
   BellOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DesktopOutlined,
-  SettingOutlined,
   InboxOutlined,
+  SettingOutlined,
   TeamOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
@@ -37,23 +37,23 @@ export const navItems: NavItem[] = [
     ],
   },
   {
-    key: "docker",
-    label: "运维执行",
-    icon: <DatabaseOutlined />,
-    children: [
-      { key: "/docker/nodes", label: "Docker", permission: "docker.view" },
-      { key: "/nginx/nodes", label: "Nginx", permission: "nginx.view" },
-    ],
-  },
-  {
-    key: "delivery",
-    label: "交付发布",
-    icon: <InboxOutlined />,
-    children: [
-      { key: "/delivery/registries", label: "Registry", permission: "registries.view" },
-      {
-        key: "/delivery/services",
-        label: "服务定义",
+      key: "docker",
+      label: "运行资源",
+      icon: <DatabaseOutlined />,
+      children: [
+        { key: "/docker/nodes", label: "Docker 节点", icon: <DatabaseOutlined />, permission: "docker.view" },
+        { key: "/nginx/nodes", label: "Nginx 节点", icon: <DeploymentUnitOutlined />, permission: "nginx.view" },
+      ],
+    },
+    {
+      key: "delivery",
+      label: "应用交付",
+      icon: <InboxOutlined />,
+      children: [
+        { key: "/delivery/registries", label: "镜像仓库", icon: <InboxOutlined />, permission: "registries.view" },
+        {
+          key: "/delivery/services",
+          label: "服务定义",
         icon: <AppstoreOutlined />,
         permission: "services.view",
       },
@@ -67,19 +67,19 @@ export const navItems: NavItem[] = [
   },
   {
     key: "/audits",
-    label: "审计日志",
+    label: "操作审计",
     icon: <AuditOutlined />,
     permission: "audits.view",
   },
   {
     key: "alerts",
-    label: "稳定性",
+    label: "告警中心",
     icon: <BellOutlined />,
     children: [{ key: "/alerts/events", label: "告警事件", permission: "alerts.view" }],
   },
   {
     key: "settings",
-    label: "告警配置",
+    label: "通知与规则",
     icon: <SettingOutlined />,
     children: [
       { key: "/settings/notifications", label: "通知通道", permission: "notifications.view" },
@@ -102,9 +102,9 @@ export const hiddenNavTitles: Record<string, string> = {
   "/setup/admin": "初始化管理员",
   "/login": "登录",
   "/terminal": "终端",
-  "/delivery/registries": "Registry",
+  "/delivery/registries": "镜像仓库",
   "/delivery/services": "服务定义",
-  "/nginx/nodes": "Nginx",
+  "/nginx/nodes": "Nginx 节点",
   "/alerts/events": "告警事件",
   "/settings/notifications": "通知通道",
   "/settings/alert-rules": "告警规则",

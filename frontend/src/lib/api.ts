@@ -395,6 +395,15 @@ type BackendDashboardSummary = {
   recentAudits: BackendAuditLog[];
 };
 
+type BackendResourceContext = {
+  resourceType: string;
+  resourceId: string;
+  summary?: unknown;
+  recentTasks?: BackendTask[];
+  recentAudits?: BackendAuditLog[];
+  recentAlerts?: BackendAlertEvent[];
+};
+
 type BackendServiceHealthCheck = {
   id: string;
   serviceId: string;
@@ -566,6 +575,7 @@ function pageItems<T>(page?: BackendPage<T> | T[] | null): T[] {
 function mapLoginResult(result: BackendLoginResult): AuthSession {
   return {
     token: result.tokens.accessToken,
+    refreshToken: result.tokens.refreshToken,
     user: mapBackendUser(result.user),
     permissions: permissionsFromUser(result.user),
   };
@@ -1188,6 +1198,33 @@ export const dashboardApi = {
   },
 };
 
+export const resourcesApi = {
+  context: async (
+    resourceType: string,
+    resourceId: string,
+  ): Promise<{ recentTasks: Task[]; recentAudits: AuditLog[]; recentAlerts: AlertEvent[] }> => {
+    if (USE_MOCK) {
+      const [recentTasks, recentAudits, recentAlerts] = await Promise.all([
+        mockService.listTasks(token(), { resourceType, resourceId }),
+        mockService.listAudits(token(), { resourceType, resourceId }),
+        mockService.listAlertEvents(token()),
+      ]);
+      return {
+        recentTasks,
+        recentAudits,
+        recentAlerts: recentAlerts.filter((item) => item.resourceType === resourceType && item.resourceId === resourceId),
+      };
+    }
+    const params = new URLSearchParams({ resourceType, resourceId });
+    const context = await http.get<BackendResourceContext>(`/resources/context?${params.toString()}`);
+    return {
+      recentTasks: (context.recentTasks ?? []).map(mapBackendTask),
+      recentAudits: (context.recentAudits ?? []).map(mapBackendAudit),
+      recentAlerts: (context.recentAlerts ?? []).map(mapAlertEvent),
+    };
+  },
+};
+
 export const usersApi = {
   list: async (keyword = ""): Promise<User[]> => {
     if (USE_MOCK) {
@@ -1736,7 +1773,12 @@ export const alertRulesApi = {
 };
 
 export const alertsApi = {
-  listEvents: async (filters?: { status?: string; eventType?: string }): Promise<AlertEvent[]> => {
+  listEvents: async (filters?: {
+    status?: string;
+    eventType?: string;
+    resourceType?: string;
+    resourceId?: string;
+  }): Promise<AlertEvent[]> => {
     if (USE_MOCK) {
       return mockService.listAlertEvents(token(), filters);
     }
@@ -1746,6 +1788,12 @@ export const alertsApi = {
     }
     if (filters?.eventType) {
       params.set("eventType", filters.eventType);
+    }
+    if (filters?.resourceType) {
+      params.set("resourceType", filters.resourceType);
+    }
+    if (filters?.resourceId) {
+      params.set("resourceId", filters.resourceId);
     }
     const query = params.toString();
     const page = await http.get<BackendPage<BackendAlertEvent>>(query ? `/alerts/events?${query}` : "/alerts/events");
@@ -1888,6 +1936,12 @@ export const tasksApi = {
     if (filters?.status) {
       params.set("status", filters.status);
     }
+    if (filters?.resourceType) {
+      params.set("resourceType", filters.resourceType);
+    }
+    if (filters?.resourceId) {
+      params.set("resourceId", filters.resourceId);
+    }
     const query = params.toString();
     const page = await http.get<BackendPage<BackendTask>>(query ? `/tasks?${query}` : "/tasks");
     return pageItems(page).map(mapBackendTask);
@@ -1979,6 +2033,9 @@ export const auditsApi = {
     }
     if (filters?.resourceType) {
       params.set("resourceType", filters.resourceType);
+    }
+    if (filters?.resourceId) {
+      params.set("resourceId", filters.resourceId);
     }
     if (filters?.result) {
       params.set("result", filters.result.toLowerCase());

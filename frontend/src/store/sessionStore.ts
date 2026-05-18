@@ -1,12 +1,21 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import { authApi } from "../lib/api";
+import { ApiError } from "../types/api";
 import type { AuthSession, CurrentUserPayload, User } from "../types/models";
 
 const SESSION_STORAGE_KEY = "aegisops-mvp-session";
 
+type StoredSessionSnapshot = {
+  token: string;
+  refreshToken?: string;
+  user?: User | null;
+  permissions?: string[];
+};
+
 type SessionStore = {
   token: string | null;
+  refreshToken?: string;
   user: User | null;
   permissions: string[];
   initialized: boolean;
@@ -17,37 +26,60 @@ type SessionStore = {
   setBootstrapped: (bootstrapped: boolean) => void;
 };
 
-function readStoredToken() {
+function readStoredSession(): StoredSessionSnapshot | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.localStorage.getItem(SESSION_STORAGE_KEY);
+  const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  if (!raw.trim().startsWith("{")) {
+    return { token: raw };
+  }
+  try {
+    const parsed = JSON.parse(raw) as StoredSessionSnapshot;
+    if (!parsed?.token) {
+      return null;
+    }
+    return {
+      token: parsed.token,
+      refreshToken: parsed.refreshToken,
+      user: parsed.user ?? null,
+      permissions: parsed.permissions ?? [],
+    };
+  } catch {
+    return null;
+  }
 }
 
-function persistToken(token: string | null) {
+function persistSession(session: StoredSessionSnapshot | null) {
   if (typeof window === "undefined") {
     return;
   }
-  if (!token) {
+  if (!session?.token) {
     window.localStorage.removeItem(SESSION_STORAGE_KEY);
     return;
   }
-  window.localStorage.setItem(SESSION_STORAGE_KEY, token);
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
+const storedSession = readStoredSession();
+
 export const useSessionStore = create<SessionStore>((set) => ({
-  token: readStoredToken(),
-  user: null,
-  permissions: [],
+  token: storedSession?.token ?? null,
+  refreshToken: storedSession?.refreshToken,
+  user: storedSession?.user ?? null,
+  permissions: storedSession?.permissions ?? [],
   initialized: false,
   bootstrapped: false,
-  setSession: ({ token, user, permissions }) => {
-    persistToken(token);
-    set({ token, user, permissions });
+  setSession: ({ token, refreshToken, user, permissions }) => {
+    persistSession({ token, refreshToken, user, permissions });
+    set({ token, refreshToken, user, permissions });
   },
   clearSession: () => {
-    persistToken(null);
-    set({ token: null, user: null, permissions: [] });
+    persistSession(null);
+    set({ token: null, refreshToken: undefined, user: null, permissions: [] });
   },
   setInitialized: (initialized) => set({ initialized }),
   setBootstrapped: (bootstrapped) => set({ bootstrapped }),
@@ -75,12 +107,13 @@ export function useBootstrapSession() {
             if (mounted) {
               setSession({
                 token,
+                refreshToken: useSessionStore.getState().refreshToken,
                 user: result.user,
                 permissions: result.permissions,
               });
             }
-          } catch {
-            if (mounted) {
+          } catch (error) {
+            if (mounted && error instanceof ApiError && (error.status === 401 || error.status === 403)) {
               clearSession();
             }
           }

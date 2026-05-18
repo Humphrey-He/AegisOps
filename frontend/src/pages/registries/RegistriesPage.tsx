@@ -13,9 +13,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { auditsApi, registriesApi, secretsApi } from "../../lib/api";
-import { queryKeys } from "../../lib/queryKeys";
-import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
 import { DangerConfirm } from "../../components/DangerConfirm";
 import { EmptyState } from "../../components/EmptyState";
@@ -26,7 +23,10 @@ import { PermissionGuard } from "../../components/PermissionGuard";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { StatusBadge } from "../../components/StatusBadge";
+import { auditsApi, registriesApi, secretsApi } from "../../lib/api";
+import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
+import { queryKeys } from "../../lib/queryKeys";
 import { auditMatchesResource, buildAuditsPath } from "../../lib/resourceNavigation";
 import type { Registry, RegistryInput, Secret } from "../../types/models";
 
@@ -39,7 +39,7 @@ type RegistryFormValues = {
 };
 
 const authTypeLabelMap: Record<Registry["authType"], string> = {
-  NONE: "匿名访问",
+  NONE: "Anonymous",
   BASIC: "Basic Auth",
   TOKEN: "Bearer Token",
 };
@@ -60,7 +60,7 @@ function classifyRegistryError(message: string) {
     return {
       type: "error" as const,
       title: "认证失败",
-      description: "请检查绑定凭证是否存在，以及 Basic 模式是否使用 username:password 格式。",
+      description: "请检查绑定凭证是否存在，并确认 Basic 模式是否使用 username:password 格式。",
     };
   }
   if (normalized.includes("network")) {
@@ -74,7 +74,7 @@ function classifyRegistryError(message: string) {
     return {
       type: "info" as const,
       title: "资源为空或不存在",
-      description: "当前仓库路径或 Tag 不存在，也可能是 Registry 中还没有推送任何镜像。",
+      description: "当前仓库路径或 Tag 不存在，也可能是 Registry 里暂时还没有推送任何镜像。",
     };
   }
   return {
@@ -82,6 +82,16 @@ function classifyRegistryError(message: string) {
     title: "返回提示",
     description: message,
   };
+}
+
+function truncateDigest(value?: string) {
+  if (!value) {
+    return "--";
+  }
+  if (value.length <= 26) {
+    return value;
+  }
+  return `${value.slice(0, 18)}...${value.slice(-8)}`;
 }
 
 export function RegistriesPage() {
@@ -214,20 +224,25 @@ export function RegistriesPage() {
     onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["registries"] }),
-        selectedRegistryId ? queryClient.invalidateQueries({ queryKey: queryKeys.registry(selectedRegistryId) }) : Promise.resolve(),
+        selectedRegistryId
+          ? queryClient.invalidateQueries({ queryKey: queryKeys.registry(selectedRegistryId) })
+          : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.audits }),
       ]);
-      if (result.taskId) {
-        navigate(`/tasks/${result.taskId}`);
-      }
       setPanelError(null);
-      setLatestActionText("已完成一次 Registry 连通性检测。");
+      setLatestActionText(
+        result.taskId
+          ? `已完成一次 Registry 连通性检测，任务 ${result.taskId} 可在任务中心继续跟踪。`
+          : "已完成一次 Registry 连通性检测。",
+      );
       await message.success("Registry 连接测试成功");
     },
     onError: async (error) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["registries"] }),
-        selectedRegistryId ? queryClient.invalidateQueries({ queryKey: queryKeys.registry(selectedRegistryId) }) : Promise.resolve(),
+        selectedRegistryId
+          ? queryClient.invalidateQueries({ queryKey: queryKeys.registry(selectedRegistryId) })
+          : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.audits }),
       ]);
       setLatestActionText("本次连接测试返回失败，请根据下方错误提示继续排查。");
@@ -266,7 +281,7 @@ export function RegistriesPage() {
     return (secretsQuery.data ?? [])
       .filter((item) => secretMatchesRegistry(item, watchedAuthType))
       .map((item) => ({
-        label: `${item.name} · ${item.type}`,
+        label: `${item.name} / ${item.type}`,
         value: item.id,
       }));
   }, [secretsQuery.data, watchedAuthType]);
@@ -300,6 +315,37 @@ export function RegistriesPage() {
   );
 
   const currentErrorMeta = panelError ? classifyRegistryError(panelError) : null;
+  const totalRegistries = registriesQuery.data?.length ?? 0;
+  const onlineRegistries = (registriesQuery.data ?? []).filter((item) => item.status === "ONLINE").length;
+  const authRegistries = (registriesQuery.data ?? []).filter((item) => item.authType !== "NONE").length;
+  const testedRegistries = (registriesQuery.data ?? []).filter((item) => Boolean(item.lastTestAt)).length;
+  const repositoryCount = repositoriesQuery.data?.repositories.length ?? 0;
+  const selectedTagCount = tagsQuery.data?.tags.length ?? 0;
+  const manifestDigest = manifestQuery.data?.digest || "--";
+  const primaryAction = selectedRegistry?.status === "ONLINE" ? "browse" : "test";
+
+  const summaryItems = [
+    {
+      label: "Registry 总数",
+      value: totalRegistries,
+      helper: keyword ? `当前按关键词“${keyword}”过滤` : "当前纳管的镜像仓库数量",
+    },
+    {
+      label: "在线 Registry",
+      value: onlineRegistries,
+      helper: "最近一次连接测试成功，可继续浏览仓库目录与 Tag",
+    },
+    {
+      label: "需认证仓库",
+      value: authRegistries,
+      helper: "包含 Basic Auth 和 Bearer Token 两类接入方式",
+    },
+    {
+      label: "已测试仓库",
+      value: testedRegistries,
+      helper: "至少保留过一条连通性测试记录",
+    },
+  ];
 
   if (registriesQuery.isError) {
     return <ErrorState message={registriesQuery.error.message} onRetry={() => void registriesQuery.refetch()} />;
@@ -310,7 +356,8 @@ export function RegistriesPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
           title="Registry"
-          description="统一管理镜像仓库接入、连接检测、仓库目录与 Tag 浏览。"
+          description="统一管理镜像仓库接入、连通性检测、仓库目录与 Tag 浏览。"
+          eyebrow="交付来源 / Registry 工作台"
           extra={
             <PermissionGuard permission="registries.manage">
               <Button
@@ -329,11 +376,23 @@ export function RegistriesPage() {
         />
 
         <Card className="page-card">
+          <div className="workbench-summary-grid">
+            {summaryItems.map((item) => (
+              <div key={item.label} className="workbench-summary-card">
+                <Typography.Text className="workbench-summary-label">{item.label}</Typography.Text>
+                <div className="workbench-summary-value">{item.value}</div>
+                <div className="workbench-summary-helper">{item.helper}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="page-card">
           <div className="page-toolbar">
             <div className="page-toolbar-start">
               <Input.Search
                 allowClear
-                placeholder="搜索 Registry 名称、地址或描述"
+                placeholder="搜索 Registry 名称、地址或说明"
                 style={{ width: 360 }}
                 onSearch={(value) => {
                   setKeyword(value);
@@ -369,7 +428,7 @@ export function RegistriesPage() {
                   emptyText: (
                     <EmptyState
                       title="还没有接入任何 Registry"
-                      description="接入镜像仓库后，可为服务选择镜像版本并查看镜像摘要。"
+                      description="接入镜像仓库后，可以为服务选择镜像版本并查看镜像摘要。"
                       action={
                         <Button type="primary" onClick={() => setDrawerOpen(true)}>
                           创建第一个 Registry
@@ -412,8 +471,35 @@ export function RegistriesPage() {
           <div className="resource-detail-pane">
             <ResourceDetailPanel
               title={selectedRegistry?.name}
+              kicker={selectedRegistry ? "镜像来源上下文" : undefined}
               subtitle={selectedRegistry?.url}
               status={selectedRegistry ? <StatusBadge status={selectedRegistry.status} /> : undefined}
+              helper={
+                selectedRegistry
+                  ? "围绕当前 Registry 集中查看认证方式、连接状态、仓库目录、Tag 与 Manifest 摘要，减少在资源列表、发布动作和审计之间来回切换。"
+                  : undefined
+              }
+              highlights={
+                selectedRegistry
+                  ? [
+                      {
+                        label: "目录数量",
+                        value: repositoryCount,
+                        helper: selectedRegistry.status === "ONLINE" ? "可直接浏览当前可用的 Repositories" : "建议先完成连接测试再继续浏览",
+                      },
+                      {
+                        label: "当前 Tag 数量",
+                        value: selectedRepository ? selectedTagCount : "--",
+                        helper: selectedRepository ? `当前仓库：${selectedRepository}` : "选择一个 Repository 后显示 Tag 规模",
+                      },
+                      {
+                        label: "Manifest Digest",
+                        value: manifestDigest === "--" ? "--" : truncateDigest(manifestDigest),
+                        helper: manifestDigest === "--" ? "选中 Tag 后即可查看镜像摘要" : "可作为后续发布引用的版本指纹",
+                      },
+                    ]
+                  : []
+              }
               meta={
                 selectedRegistry
                   ? [
@@ -434,7 +520,7 @@ export function RegistriesPage() {
                       },
                       {
                         label: "仓库数量",
-                        value: repositoriesQuery.data?.repositories.length ?? 0,
+                        value: repositoryCount,
                       },
                       {
                         label: "说明",
@@ -449,49 +535,88 @@ export function RegistriesPage() {
               }
               actions={
                 selectedRegistry ? (
-                  <Space wrap>
-                    <PermissionGuard permission="registries.test">
+                  <>
+                    <div className="resource-action-group">
+                      <PermissionGuard permission="registries.test">
+                        <Button
+                          type={primaryAction === "test" ? "primary" : "default"}
+                          loading={testMutation.isPending}
+                          onClick={() => {
+                            setLatestActionText("正在执行 Registry 连通性测试...");
+                            setPanelError(null);
+                            testMutation.mutate(selectedRegistry.id);
+                          }}
+                        >
+                          测试连接
+                        </Button>
+                      </PermissionGuard>
                       <Button
-                        type={selectedRegistry.status !== "ONLINE" ? "primary" : "default"}
-                        loading={testMutation.isPending}
+                        type={primaryAction === "browse" ? "primary" : "default"}
                         onClick={() => {
-                          setLatestActionText("正在执行 Registry 连通性测试...");
-                          setPanelError(null);
-                          testMutation.mutate(selectedRegistry.id);
+                          const firstRepository = repositoriesQuery.data?.repositories?.[0];
+                          if (firstRepository) {
+                            setSelectedRepository(firstRepository);
+                            setSelectedReference("");
+                          }
                         }}
                       >
-                        测试连接
+                        浏览仓库
                       </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="registries.manage">
+                    </div>
+                    <div className="resource-action-group">
                       <Button
-                        onClick={() => {
-                          setEditingRegistry(selectedRegistry);
-                          form.setFieldsValue({
-                            name: selectedRegistry.name,
-                            url: selectedRegistry.url,
-                            authType: selectedRegistry.authType,
-                            secretId: selectedRegistry.secretId || undefined,
-                            description: selectedRegistry.description,
-                          });
-                          setDrawerOpen(true);
-                        }}
+                        onClick={() =>
+                          navigate(
+                            buildAuditsPath({
+                              resourceType: "registry",
+                              resourceId: selectedRegistry.id,
+                            }),
+                          )
+                        }
                       >
-                        编辑
+                        查看审计
                       </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="registries.manage">
-                      <Button danger onClick={() => setDeleteTarget(selectedRegistry)}>
-                        删除
-                      </Button>
-                    </PermissionGuard>
-                  </Space>
+                      <PermissionGuard permission="registries.manage">
+                        <Button
+                          onClick={() => {
+                            setEditingRegistry(selectedRegistry);
+                            form.setFieldsValue({
+                              name: selectedRegistry.name,
+                              url: selectedRegistry.url,
+                              authType: selectedRegistry.authType,
+                              secretId: selectedRegistry.secretId || undefined,
+                              description: selectedRegistry.description,
+                            });
+                            setDrawerOpen(true);
+                          }}
+                        >
+                          编辑
+                        </Button>
+                      </PermissionGuard>
+                      <PermissionGuard permission="registries.manage">
+                        <Button danger onClick={() => setDeleteTarget(selectedRegistry)}>
+                          删除
+                        </Button>
+                      </PermissionGuard>
+                    </div>
+                  </>
                 ) : undefined
               }
             >
               {latestActionText ? (
-                <div className="resource-detail-section">
+                <div className="resource-detail-section resource-callout">
                   <Typography.Text type="secondary">{latestActionText}</Typography.Text>
+                </div>
+              ) : null}
+
+              {selectedRegistry && !currentErrorMeta && selectedRegistry.status !== "ONLINE" ? (
+                <div className="resource-detail-section">
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="当前 Registry 连接状态不稳定"
+                    description="建议先完成连接测试，确认 URL、认证方式和网络策略正常，再继续浏览仓库目录与 Tag。"
+                  />
                 </div>
               ) : null}
 
@@ -508,16 +633,22 @@ export function RegistriesPage() {
 
               <div className="resource-detail-section">
                 <div className="page-toolbar">
-                  <Typography.Text strong>仓库目录</Typography.Text>
+                  <Space direction="vertical" size={2}>
+                    <Typography.Text strong>仓库目录</Typography.Text>
+                    <Typography.Text type="secondary">
+                      先选定 Repository，再继续下探 Tag 与 Manifest 摘要，方便后续发布直接引用。
+                    </Typography.Text>
+                  </Space>
                   <Typography.Text type="secondary">
-                    {repositoriesQuery.isLoading
-                      ? "正在加载目录..."
-                      : `${repositoriesQuery.data?.repositories.length ?? 0} 个仓库`}
+                    {repositoriesQuery.isLoading ? "正在加载目录..." : `${repositoryCount} 个仓库`}
                   </Typography.Text>
                 </div>
                 <div className="two-col-grid registry-browser-grid" style={{ marginTop: 12 }}>
                   <div className="resource-subpanel registry-browser-card">
-                    <Typography.Text strong>Repositories</Typography.Text>
+                    <Space direction="vertical" size={2}>
+                      <Typography.Text strong>Repositories</Typography.Text>
+                      <Typography.Text type="secondary">选择一个仓库后，可继续查看当前可用的 Tag 版本。</Typography.Text>
+                    </Space>
                     <DataTable
                       rowKey="repository"
                       pagination={false}
@@ -557,7 +688,12 @@ export function RegistriesPage() {
                   </div>
 
                   <div className="resource-subpanel registry-browser-card">
-                    <Typography.Text strong>{selectedRepository ? `Tags · ${selectedRepository}` : "Tags"}</Typography.Text>
+                    <Space direction="vertical" size={2}>
+                      <Typography.Text strong>{selectedRepository ? `Tags / ${selectedRepository}` : "Tags"}</Typography.Text>
+                      <Typography.Text type="secondary">
+                        {selectedRepository ? "选择一个 Tag 后可以进一步查看 Manifest 摘要。" : "先从左侧选择一个 Repository"}
+                      </Typography.Text>
+                    </Space>
                     <DataTable
                       rowKey="tag"
                       pagination={false}
@@ -574,7 +710,7 @@ export function RegistriesPage() {
                         emptyText: selectedRepository ? (
                           <EmptyState
                             title="当前仓库暂无 Tag"
-                            description="这通常意味着镜像尚未推送，或 Registry 返回了空目录。"
+                            description="这通常意味着镜像尚未推送，或者 Registry 返回了空目录。"
                           />
                         ) : (
                           <EmptyState title="先选择一个仓库" description="左侧选中仓库后，这里会展示可用的镜像 Tag。" />
@@ -593,7 +729,12 @@ export function RegistriesPage() {
 
               <div className="resource-detail-section">
                 <div className="page-toolbar">
-                  <Typography.Text strong>镜像摘要</Typography.Text>
+                  <Space direction="vertical" size={2}>
+                    <Typography.Text strong>镜像摘要</Typography.Text>
+                    <Typography.Text type="secondary">
+                      最后一步是核对 Digest、Content-Type 和 Manifest 结构，为发布和回滚做版本确认。
+                    </Typography.Text>
+                  </Space>
                   {selectedReference ? (
                     <Typography.Text type="secondary">
                       {selectedRepository}:{selectedReference}
@@ -634,6 +775,7 @@ export function RegistriesPage() {
 
               <ResourceActivityList
                 title="最近审计"
+                helper="审计记录可以帮助你确认连接测试、认证调整和仓库绑定是否刚刚发生过变更。"
                 actionLabel={selectedRegistry ? "查看全部审计" : undefined}
                 onActionClick={
                   selectedRegistry
@@ -650,7 +792,7 @@ export function RegistriesPage() {
                   key: audit.id,
                   title: audit.action,
                   description: audit.summary,
-                  meta: `${audit.actor} · ${formatDateTime(audit.createdAt)}`,
+                  meta: `${audit.actor} / ${formatDateTime(audit.createdAt)}`,
                   extra: <StatusBadge status={audit.result} />,
                 }))}
                 emptyText="当前 Registry 还没有关联审计记录。"
@@ -697,7 +839,7 @@ export function RegistriesPage() {
             <Form.Item label="认证方式" name="authType" rules={[{ required: true, message: "请选择认证方式" }]}>
               <Select
                 options={[
-                  { label: "匿名访问", value: "NONE" },
+                  { label: "Anonymous", value: "NONE" },
                   { label: "Basic Auth", value: "BASIC" },
                   { label: "Bearer Token", value: "TOKEN" },
                 ]}

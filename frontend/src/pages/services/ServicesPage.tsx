@@ -610,6 +610,28 @@ export function ServicesPage() {
       serviceTasks.find((task) => isServiceReleaseTask(task.type) && ["PENDING", "RUNNING"].includes(task.status)) ?? null,
     [serviceTasks],
   );
+  const serviceSummaryItems = [
+    {
+      label: "服务总数",
+      value: servicesQuery.data?.length ?? 0,
+      helper: keyword ? `当前按关键词“${keyword}”检索` : "当前服务定义清单",
+    },
+    {
+      label: "已启用",
+      value: (servicesQuery.data ?? []).filter((item) => item.status === "ACTIVE").length,
+      helper: "允许进入发布和运行编排的服务",
+    },
+    {
+      label: "草稿 / 归档",
+      value: (servicesQuery.data ?? []).filter((item) => item.status === "DRAFT" || item.status === "ARCHIVED").length,
+      helper: "仍在准备或已退出交付面的服务",
+    },
+    {
+      label: "待处理异常",
+      value: serviceAlertEvents.filter((event) => event.status !== "RESOLVED").length,
+      helper: selectedService ? "当前选中服务的异常信号" : "选中服务后展示其告警数量",
+    },
+  ];
 
   const versionReleaseTaskMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -729,6 +751,7 @@ export function ServicesPage() {
         <PageHeader
           title="服务定义"
           description="统一管理服务定义、版本、实例与发布记录。"
+          eyebrow="应用交付 / 服务工作台"
           extra={
             <PermissionGuard permission="services.manage">
               <Button
@@ -744,6 +767,18 @@ export function ServicesPage() {
             </PermissionGuard>
           }
         />
+
+        <Card className="page-card">
+          <div className="workbench-summary-grid">
+            {serviceSummaryItems.map((item) => (
+              <div key={item.label} className="workbench-summary-card">
+                <Typography.Text className="workbench-summary-label">{item.label}</Typography.Text>
+                <div className="workbench-summary-value">{item.value}</div>
+                <div className="workbench-summary-helper">{item.helper}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
 
         <Card className="page-card">
           <div className="page-toolbar">
@@ -843,8 +878,35 @@ export function ServicesPage() {
           <div className="resource-detail-pane">
             <ResourceDetailPanel
               title={selectedService?.name}
+              kicker={selectedService ? "服务上下文" : undefined}
               subtitle={selectedService ? `${selectedService.code} · ${selectedService.image}` : undefined}
               status={selectedService ? <StatusBadge status={selectedService.status} /> : undefined}
+              helper={
+                selectedService
+                  ? "围绕当前服务集中查看版本、实例、发布流水、健康检查和异常闭环，让交付动作和运行信号始终留在同一个上下文里。"
+                  : undefined
+              }
+              highlights={
+                selectedService
+                  ? [
+                      {
+                        label: "当前版本",
+                        value: selectedService.currentVersion || "--",
+                        helper: selectedService.defaultTag ? `默认 Tag ${selectedService.defaultTag}` : "尚未设置默认 Tag",
+                      },
+                      {
+                        label: "运行实例",
+                        value: serviceInstancesQuery.data?.length ?? 0,
+                        helper: selectedNode ? `目标节点 ${selectedNode.name}` : "尚未识别目标节点",
+                      },
+                      {
+                        label: "待处理异常",
+                        value: serviceAlertEvents.filter((event) => event.status !== "RESOLVED").length,
+                        helper: latestServiceAlert ? `最近触发 ${formatDateTime(latestServiceAlert.lastTriggeredAt)}` : "当前没有服务相关告警",
+                      },
+                    ]
+                  : []
+              }
               meta={
                 selectedService
                   ? [
@@ -867,10 +929,6 @@ export function ServicesPage() {
                       {
                         label: "当前版本",
                         value: selectedService.currentVersion || "--",
-                      },
-                      {
-                        label: "最近健康检查",
-                        value: latestHealthCheck ? <StatusBadge status={latestHealthCheck.status} /> : "--",
                       },
                       {
                         label: "最近通知状态",
@@ -913,61 +971,71 @@ export function ServicesPage() {
               }
               actions={
                 selectedService ? (
-                  <Space wrap>
-                    <PermissionGuard permission="services.release">
-                      <Button
-                        type="primary"
-                        disabled={Boolean(activeReleaseTask)}
-                        onClick={() => {
-                          setReleaseMode("release");
-                          releaseForm.setFieldsValue(buildReleaseFormValues(selectedService));
-                          setReleaseDrawerOpen(true);
-                        }}
-                      >
-                        首次发布
+                  <>
+                    <div className="resource-action-group">
+                      <PermissionGuard permission="services.release">
+                        <Button
+                          type="primary"
+                          disabled={Boolean(activeReleaseTask)}
+                          onClick={() => {
+                            setReleaseMode("release");
+                            releaseForm.setFieldsValue(buildReleaseFormValues(selectedService));
+                            setReleaseDrawerOpen(true);
+                          }}
+                        >
+                          首次发布
+                        </Button>
+                      </PermissionGuard>
+                      <PermissionGuard permission="services.rollback">
+                        <Button
+                          disabled={Boolean(activeReleaseTask)}
+                          onClick={() => {
+                            setReleaseMode("upgrade");
+                            releaseForm.setFieldsValue(buildReleaseFormValues(selectedService));
+                            setReleaseDrawerOpen(true);
+                          }}
+                        >
+                          升级版本
+                        </Button>
+                      </PermissionGuard>
+                      <PermissionGuard permission="services.release">
+                        <Button
+                          disabled={Boolean(activeReleaseTask)}
+                          onClick={() => {
+                            setReleaseMode("rollback");
+                            releaseForm.setFieldsValue(buildReleaseFormValues(selectedService));
+                            setReleaseDrawerOpen(true);
+                          }}
+                        >
+                          回滚
+                        </Button>
+                      </PermissionGuard>
+                    </div>
+                    <div className="resource-action-group">
+                      <Button onClick={() => navigate(buildTasksPath({ resourceType: "service", resourceId: selectedService.id }))}>
+                        查看任务
                       </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="services.rollback">
-                      <Button
-                        disabled={Boolean(activeReleaseTask)}
-                        onClick={() => {
-                          setReleaseMode("upgrade");
-                          releaseForm.setFieldsValue(buildReleaseFormValues(selectedService));
-                          setReleaseDrawerOpen(true);
-                        }}
-                      >
-                        升级版本
+                      <Button onClick={() => navigate(buildAuditsPath({ resourceType: "service", resourceId: selectedService.id }))}>
+                        查看审计
                       </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="services.release">
-                      <Button
-                        disabled={Boolean(activeReleaseTask)}
-                        onClick={() => {
-                          setReleaseMode("rollback");
-                          releaseForm.setFieldsValue(buildReleaseFormValues(selectedService));
-                          setReleaseDrawerOpen(true);
-                        }}
-                      >
-                        回滚
-                      </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="services.manage">
-                      <Button
-                        onClick={() => {
-                          setEditingService(selectedService);
-                          serviceForm.setFieldsValue(buildServiceFormValues(selectedService));
-                          setDrawerOpen(true);
-                        }}
-                      >
-                        编辑
-                      </Button>
-                    </PermissionGuard>
-                    <PermissionGuard permission="services.manage">
-                      <Button danger onClick={() => setDeleteTarget(selectedService)}>
-                        删除
-                      </Button>
-                    </PermissionGuard>
-                  </Space>
+                      <PermissionGuard permission="services.manage">
+                        <Button
+                          onClick={() => {
+                            setEditingService(selectedService);
+                            serviceForm.setFieldsValue(buildServiceFormValues(selectedService));
+                            setDrawerOpen(true);
+                          }}
+                        >
+                          编辑
+                        </Button>
+                      </PermissionGuard>
+                      <PermissionGuard permission="services.manage">
+                        <Button danger onClick={() => setDeleteTarget(selectedService)}>
+                          删除
+                        </Button>
+                      </PermissionGuard>
+                    </div>
+                  </>
                 ) : undefined
               }
             >
@@ -988,7 +1056,7 @@ export function ServicesPage() {
               ) : null}
 
               {latestActionText ? (
-                <div className="resource-detail-section">
+                <div className="resource-detail-section resource-callout">
                   <Typography.Text type="secondary">{latestActionText}</Typography.Text>
                 </div>
               ) : null}
@@ -1362,6 +1430,7 @@ export function ServicesPage() {
 
               <ResourceActivityList
                 title="最近任务"
+                helper="先看发布、升级、回滚和健康检查相关任务，确认这条交付链路现在卡在哪一步。"
                 actionLabel={selectedService ? "进入任务中心" : undefined}
                 onActionClick={
                   selectedService
@@ -1386,6 +1455,7 @@ export function ServicesPage() {
 
               <ResourceActivityList
                 title="最近审计"
+                helper="操作审计可以帮助你对齐最近一次服务变更、发布动作和异常出现的时间线。"
                 actionLabel={selectedService ? "查看全部审计" : undefined}
                 onActionClick={
                   selectedService
