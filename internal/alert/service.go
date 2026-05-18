@@ -232,6 +232,9 @@ func (s *Service) dispatch(ctx context.Context, event model.AlertEvent) error {
 		return err
 	}
 	for _, rule := range rules {
+		if !ruleMatchesEvent(rule, event) {
+			continue
+		}
 		channelIDs := parseIDs(rule.ChannelIDs)
 		var channels []model.NotificationChannel
 		query := s.db.WithContext(ctx).Where("enabled = ?", true)
@@ -242,6 +245,9 @@ func (s *Service) dispatch(ctx context.Context, event model.AlertEvent) error {
 			return err
 		}
 		for _, channel := range channels {
+			if !s.shouldNotify(ctx, rule, event, channel.ID) {
+				continue
+			}
 			language := firstNonEmpty(rule.Language, channel.Language, notification.LanguageChinese)
 			_, _ = s.notifications.Send(ctx, channel, notification.SendRequest{
 				EventID:      event.ID,
@@ -262,6 +268,42 @@ func (s *Service) dispatch(ctx context.Context, event model.AlertEvent) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) shouldNotify(ctx context.Context, rule model.AlertRule, event model.AlertEvent, channelID string) bool {
+	if rule.DedupeWindowSeconds <= 0 {
+		return true
+	}
+	since := time.Now().UTC().Add(-time.Duration(rule.DedupeWindowSeconds) * time.Second)
+	var count int64
+	err := s.db.WithContext(ctx).Model(&model.NotificationRecord{}).
+		Where("event_id = ? AND channel_id = ? AND created_at >= ?", event.ID, channelID, since).
+		Count(&count).Error
+	return err != nil || count == 0
+}
+
+func ruleMatchesEvent(rule model.AlertRule, event model.AlertEvent) bool {
+	if strings.TrimSpace(rule.ResourceType) != "" && strings.TrimSpace(rule.ResourceType) != strings.TrimSpace(event.ResourceType) {
+		return false
+	}
+	return resourceScopeMatches(rule.ResourceScope, event.ResourceID)
+}
+
+func resourceScopeMatches(scope, resourceID string) bool {
+	scope = strings.TrimSpace(scope)
+	if scope == "" || strings.EqualFold(scope, "all") || scope == "*" {
+		return true
+	}
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		return false
+	}
+	for _, item := range parseIDs(scope) {
+		if item == resourceID || item == "*" || strings.EqualFold(item, "all") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) resourceDisplayName(ctx context.Context, resourceType, resourceID string) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -198,6 +199,124 @@ func TestCreateEventDispatchesNotificationRecordForMatchingRule(t *testing.T) {
 	}
 	if len(records) != 1 {
 		t.Fatalf("notification record count after dedupe = %d, want 1", len(records))
+	}
+}
+
+func TestDispatchHonorsResourceScope(t *testing.T) {
+	database := openTestDB(t)
+	notifications := notification.NewService(database)
+	service := NewService(database, notifications)
+
+	channel, err := notifications.CreateChannel(context.Background(), notification.ChannelRequest{
+		Name:          "Scoped Telegram",
+		Type:          model.NotificationChannelTypeTelegram,
+		Config:        "{}",
+		DefaultTarget: "ops",
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	_, err = service.CreateRule(context.Background(), RuleRequest{
+		Name:          "Scoped host offline",
+		EventType:     "host_offline",
+		ResourceType:  "host",
+		ResourceScope: `["host-allowed"]`,
+		ChannelIDs:    channel.ID,
+	})
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	if _, err := service.CreateEvent(context.Background(), EventRequest{
+		EventType:    "host_offline",
+		ResourceType: "host",
+		ResourceID:   "host-denied",
+		DedupeKey:    "host_offline:host:host-denied",
+	}); err != nil {
+		t.Fatalf("create denied event: %v", err)
+	}
+	var count int64
+	if err := database.Model(&model.NotificationRecord{}).Count(&count).Error; err != nil {
+		t.Fatalf("count denied notifications: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("notification count after denied scope = %d, want 0", count)
+	}
+
+	if _, err := service.CreateEvent(context.Background(), EventRequest{
+		EventType:    "host_offline",
+		ResourceType: "host",
+		ResourceID:   "host-allowed",
+		DedupeKey:    "host_offline:host:host-allowed",
+	}); err != nil {
+		t.Fatalf("create allowed event: %v", err)
+	}
+	if err := database.Model(&model.NotificationRecord{}).Count(&count).Error; err != nil {
+		t.Fatalf("count allowed notifications: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("notification count after allowed scope = %d, want 1", count)
+	}
+}
+
+func TestDispatchSuppressesNotificationsWithinDedupeWindow(t *testing.T) {
+	database := openTestDB(t)
+	notifications := notification.NewService(database)
+	service := NewService(database, notifications)
+
+	channel, err := notifications.CreateChannel(context.Background(), notification.ChannelRequest{
+		Name:          "Cooldown Telegram",
+		Type:          model.NotificationChannelTypeTelegram,
+		Config:        "{}",
+		DefaultTarget: "ops",
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	_, err = service.CreateRule(context.Background(), RuleRequest{
+		Name:                "Cooldown host offline",
+		EventType:           "host_offline",
+		ResourceType:        "host",
+		ResourceScope:       "host-1",
+		ChannelIDs:          channel.ID,
+		DedupeWindowSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+
+	event, err := service.CreateEvent(context.Background(), EventRequest{
+		EventType:    "host_offline",
+		ResourceType: "host",
+		ResourceID:   "host-1",
+		DedupeKey:    "host_offline:host:host-1",
+	})
+	if err != nil {
+		t.Fatalf("create first event: %v", err)
+	}
+	if err := service.dispatch(context.Background(), *event); err != nil {
+		t.Fatalf("dispatch duplicate within window: %v", err)
+	}
+	var count int64
+	if err := database.Model(&model.NotificationRecord{}).Count(&count).Error; err != nil {
+		t.Fatalf("count notification records: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("notification count within cooldown = %d, want 1", count)
+	}
+
+	old := time.Now().UTC().Add(-2 * time.Minute)
+	if err := database.Model(&model.NotificationRecord{}).Where("event_id = ?", event.ID).Update("created_at", old).Error; err != nil {
+		t.Fatalf("age notification record: %v", err)
+	}
+	if err := service.dispatch(context.Background(), *event); err != nil {
+		t.Fatalf("dispatch duplicate outside window: %v", err)
+	}
+	if err := database.Model(&model.NotificationRecord{}).Count(&count).Error; err != nil {
+		t.Fatalf("count notification records after cooldown: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("notification count outside cooldown = %d, want 2", count)
 	}
 }
 
