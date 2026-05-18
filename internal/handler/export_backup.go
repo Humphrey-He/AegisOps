@@ -1,24 +1,29 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/Humphrey-He/AegisOps/internal/audit"
+	"github.com/Humphrey-He/AegisOps/internal/auth"
 	"github.com/Humphrey-He/AegisOps/internal/exporter"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/rbac"
+	"github.com/Humphrey-He/AegisOps/pkg/response"
 )
 
 type ExportHandler struct {
 	service *exporter.Service
 	audit   *audit.Service
+	rbac    *rbac.Service
 }
 
 type BackupHandler struct {
 	service *exporter.Service
 	audit   *audit.Service
+	rbac    *rbac.Service
 }
 
 func NewExportHandler(service *exporter.Service, auditService *audit.Service) *ExportHandler {
@@ -30,6 +35,7 @@ func NewBackupHandler(service *exporter.Service, auditService *audit.Service) *B
 }
 
 func (h *ExportHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
+	h.rbac = rbacService
 	r.POST("/exports/resources", rbac.RequirePermission(rbacService, "exports.create"), h.CreateResource)
 	r.POST("/exports/records", rbac.RequirePermission(rbacService, "exports.create"), h.CreateRecords)
 	r.POST("/exports/incidents", rbac.RequirePermission(rbacService, "exports.create"), h.CreateIncident)
@@ -42,6 +48,7 @@ func (h *ExportHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service)
 }
 
 func (h *BackupHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
+	h.rbac = rbacService
 	r.POST("/backups", rbac.RequirePermission(rbacService, "backups.create"), h.Create)
 	r.GET("/backups", rbac.RequirePermission(rbacService, "backups.view"), h.List)
 	r.GET("/backups/:id", rbac.RequirePermission(rbacService, "backups.view"), h.Get)
@@ -53,6 +60,9 @@ func (h *ExportHandler) CreateResource(c *gin.Context) {
 	var req exporter.ResourceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !maskedDefaultForHandler(req.Masked) && !h.ensurePermission(c, "exports.unmasked") {
 		return
 	}
 	req.OperatorID = OperatorID(c)
@@ -71,6 +81,9 @@ func (h *ExportHandler) CreateRecords(c *gin.Context) {
 		Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !maskedDefaultForHandler(req.Masked) && !h.ensurePermission(c, "exports.unmasked") {
+		return
+	}
 	req.OperatorID = OperatorID(c)
 	item, err := h.service.CreateRecordsExport(c.Request.Context(), req)
 	if err != nil {
@@ -85,6 +98,9 @@ func (h *ExportHandler) CreateIncident(c *gin.Context) {
 	var req exporter.IncidentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !maskedDefaultForHandler(req.Masked) && !h.ensurePermission(c, "exports.unmasked") {
 		return
 	}
 	req.OperatorID = OperatorID(c)
@@ -147,6 +163,14 @@ func (h *ExportHandler) Get(c *gin.Context) {
 }
 
 func (h *ExportHandler) Download(c *gin.Context) {
+	item, err := h.service.GetJob(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusNotFound, err.Error())
+		return
+	}
+	if !item.Masked && !h.ensurePermission(c, "exports.unmasked") {
+		return
+	}
 	download, err := h.service.DownloadJob(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		Error(c, http.StatusBadRequest, err.Error())
@@ -163,6 +187,9 @@ func (h *BackupHandler) Create(c *gin.Context) {
 			Error(c, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+	if !maskedDefaultForHandler(req.Masked) && !h.ensurePermission(c, "backups.download.unmasked") {
+		return
 	}
 	req.OperatorID = OperatorID(c)
 	item, err := h.service.CreateBackup(c.Request.Context(), req)
@@ -203,6 +230,14 @@ func (h *BackupHandler) Manifest(c *gin.Context) {
 }
 
 func (h *BackupHandler) Download(c *gin.Context) {
+	item, err := h.service.GetBackup(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusNotFound, err.Error())
+		return
+	}
+	if !item.Masked && !h.ensurePermission(c, "backups.download.unmasked") {
+		return
+	}
 	download, err := h.service.DownloadBackup(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		Error(c, http.StatusBadRequest, err.Error())
@@ -210,6 +245,44 @@ func (h *BackupHandler) Download(c *gin.Context) {
 	}
 	c.Header("Content-Type", download.ContentType)
 	c.FileAttachment(download.FilePath, download.FileName)
+}
+
+func (h *ExportHandler) ensurePermission(c *gin.Context, permissionCode string) bool {
+	return ensurePermission(c, h.rbac, permissionCode)
+}
+
+func (h *BackupHandler) ensurePermission(c *gin.Context, permissionCode string) bool {
+	return ensurePermission(c, h.rbac, permissionCode)
+}
+
+func ensurePermission(c *gin.Context, rbacService *rbac.Service, permissionCode string) bool {
+	if rbacService == nil {
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", "rbac service is not configured")
+		return false
+	}
+	userValue, ok := c.Get(auth.CurrentUserKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing current user")
+		return false
+	}
+	user, ok := userValue.(*model.User)
+	if !ok || user == nil {
+		response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid current user")
+		return false
+	}
+	if err := rbacService.EnsurePermission(c.Request.Context(), user.ID, permissionCode); err != nil {
+		if errors.Is(err, rbac.ErrForbidden) {
+			response.Error(c, http.StatusForbidden, "FORBIDDEN", "permission denied")
+			return false
+		}
+		response.Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return false
+	}
+	return true
+}
+
+func maskedDefaultForHandler(value *bool) bool {
+	return value == nil || *value
 }
 
 func auditResult(item *model.ExportJob) model.AuditResult {

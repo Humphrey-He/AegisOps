@@ -129,7 +129,7 @@ func (s *Service) GetJob(ctx context.Context, id string) (*model.ExportJob, erro
 func (s *Service) CreateResourceExport(ctx context.Context, req ResourceRequest) (*model.ExportJob, error) {
 	masked := maskedDefault(req.Masked)
 	job := s.newJob(model.ExportJobTypeResource, req.ResourceType, req.ResourceID, masked, req.OperatorID)
-	if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+	if err := s.createExportJob(ctx, job); err != nil {
 		return nil, err
 	}
 	payload, err := s.resourcePayload(ctx, req.ResourceType, req.ResourceID, masked)
@@ -156,7 +156,7 @@ func (s *Service) CreateRecordsExport(ctx context.Context, req RecordsRequest) (
 	format := strings.ToLower(firstNonEmpty(req.Format, "json"))
 	job := s.newJob(model.ExportJobTypeRecords, req.RecordType, "", masked, req.OperatorID)
 	job.FiltersJSON = mustJSON(map[string]any{"recordType": req.RecordType, "format": format})
-	if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+	if err := s.createExportJob(ctx, job); err != nil {
 		return nil, err
 	}
 	payload, err := s.recordsPayload(ctx, req.RecordType, masked)
@@ -192,7 +192,7 @@ func (s *Service) CreateIncidentExport(ctx context.Context, req IncidentRequest)
 	resourceID := firstNonEmpty(req.TaskID, req.ReleaseID, req.EventID)
 	job := s.newJob(model.ExportJobTypeIncident, "incident", resourceID, masked, req.OperatorID)
 	job.FiltersJSON = mustJSON(map[string]any{"taskId": req.TaskID, "releaseId": req.ReleaseID, "eventId": req.EventID})
-	if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+	if err := s.createExportJob(ctx, job); err != nil {
 		return nil, err
 	}
 	bundle, err := s.incidentPayload(ctx, req, masked)
@@ -262,7 +262,7 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*model.B
 		Masked:    masked,
 		CreatedBy: req.OperatorID,
 	}
-	if err := s.db.WithContext(ctx).Create(record).Error; err != nil {
+	if err := s.createBackupRecord(ctx, record); err != nil {
 		return nil, err
 	}
 	fileName := safeFileName("backup-" + timestamp() + ".zip")
@@ -328,6 +328,24 @@ func (s *Service) newJob(jobType model.ExportJobType, resourceType, resourceID s
 		Masked:       masked,
 		CreatedBy:    operatorID,
 	}
+}
+
+func (s *Service) createExportJob(ctx context.Context, job *model.ExportJob) error {
+	masked := job.Masked
+	if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+		return err
+	}
+	job.Masked = masked
+	return s.db.WithContext(ctx).Model(&model.ExportJob{}).Where("id = ?", job.ID).Update("masked", masked).Error
+}
+
+func (s *Service) createBackupRecord(ctx context.Context, record *model.BackupRecord) error {
+	masked := record.Masked
+	if err := s.db.WithContext(ctx).Create(record).Error; err != nil {
+		return err
+	}
+	record.Masked = masked
+	return s.db.WithContext(ctx).Model(&model.BackupRecord{}).Where("id = ?", record.ID).Update("masked", masked).Error
 }
 
 func (s *Service) finishJob(ctx context.Context, job *model.ExportJob, path, fileName, contentType string) (*model.ExportJob, error) {

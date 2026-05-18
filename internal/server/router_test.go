@@ -927,6 +927,131 @@ func TestExportBackupRoutesSmoke(t *testing.T) {
 	}
 }
 
+func TestUnmaskedExportBackupRequiresDedicatedPermissions(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	adminToken := loginAndToken(t, router)
+
+	createUser := performRequest(router, http.MethodPost, "/api/users", []byte(`{
+		"username":"exporter",
+		"password":"plain123456",
+		"displayName":"Exporter",
+		"status":"active"
+	}`), adminToken)
+	if createUser.Code != http.StatusCreated {
+		t.Fatalf("POST /api/users status = %d, want %d; body=%s", createUser.Code, http.StatusCreated, createUser.Body.String())
+	}
+	role := model.Role{Name: "Masked Exporter", Code: "masked-exporter"}
+	if err := database.Create(&role).Error; err != nil {
+		t.Fatalf("create role: %v", err)
+	}
+	var permissions []model.Permission
+	if err := database.Where("code IN ?", []string{"exports.create", "exports.download", "backups.create", "backups.download"}).Find(&permissions).Error; err != nil {
+		t.Fatalf("load permissions: %v", err)
+	}
+	if len(permissions) != 4 {
+		t.Fatalf("loaded %d export permissions, want 4", len(permissions))
+	}
+	for _, permission := range permissions {
+		if err := database.Create(&model.RolePermission{RoleID: role.ID, PermissionID: permission.ID}).Error; err != nil {
+			t.Fatalf("assign permission %s: %v", permission.Code, err)
+		}
+	}
+	var user model.User
+	if err := database.First(&user, "username = ?", "exporter").Error; err != nil {
+		t.Fatalf("load exporter user: %v", err)
+	}
+	if err := database.Model(&user).Association("Roles").Replace(&role); err != nil {
+		t.Fatalf("assign role: %v", err)
+	}
+
+	login := performRequest(router, http.MethodPost, "/api/auth/login", []byte(`{"username":"exporter","password":"plain123456"}`), "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("exporter login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
+	}
+	var loginPayload struct {
+		Data struct {
+			Tokens struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(login.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatalf("decode exporter login: %v", err)
+	}
+	limitedToken := loginPayload.Data.Tokens.AccessToken
+
+	createService := performRequest(router, http.MethodPost, "/api/services", []byte(`{
+		"name":"Sensitive Export Demo",
+		"code":"sensitive-export-demo",
+		"image":"registry.local/export/demo",
+		"defaultTag":"1.0.0"
+	}`), adminToken)
+	if createService.Code != http.StatusCreated {
+		t.Fatalf("POST /api/services status = %d, want %d; body=%s", createService.Code, http.StatusCreated, createService.Body.String())
+	}
+	serviceID := decodeID(t, createService.Body.Bytes())
+
+	unmaskedExport := performRequest(router, http.MethodPost, "/api/exports/resources", []byte(`{
+		"resourceType":"service",
+		"resourceId":"`+serviceID+`",
+		"masked":false
+	}`), limitedToken)
+	if unmaskedExport.Code != http.StatusForbidden {
+		t.Fatalf("POST unmasked export limited status = %d, want %d; body=%s", unmaskedExport.Code, http.StatusForbidden, unmaskedExport.Body.String())
+	}
+	unmaskedBackup := performRequest(router, http.MethodPost, "/api/backups", []byte(`{"masked":false}`), limitedToken)
+	if unmaskedBackup.Code != http.StatusForbidden {
+		t.Fatalf("POST unmasked backup limited status = %d, want %d; body=%s", unmaskedBackup.Code, http.StatusForbidden, unmaskedBackup.Body.String())
+	}
+
+	adminUnmaskedExport := performRequest(router, http.MethodPost, "/api/exports/resources", []byte(`{
+		"resourceType":"service",
+		"resourceId":"`+serviceID+`",
+		"masked":false
+	}`), adminToken)
+	if adminUnmaskedExport.Code != http.StatusCreated {
+		t.Fatalf("POST unmasked export admin status = %d, want %d; body=%s", adminUnmaskedExport.Code, http.StatusCreated, adminUnmaskedExport.Body.String())
+	}
+	exportID := decodeID(t, adminUnmaskedExport.Body.Bytes())
+	var exportJob model.ExportJob
+	if err := database.First(&exportJob, "id = ?", exportID).Error; err != nil {
+		t.Fatalf("load unmasked export job: %v", err)
+	}
+	if exportJob.Masked {
+		t.Fatalf("admin unmasked export persisted as masked")
+	}
+	limitedDownload := performRequest(router, http.MethodGet, "/api/exports/"+exportID+"/download", nil, limitedToken)
+	if limitedDownload.Code != http.StatusForbidden {
+		t.Fatalf("GET unmasked export download limited status = %d, want %d; body=%s", limitedDownload.Code, http.StatusForbidden, limitedDownload.Body.String())
+	}
+
+	adminBackup := performRequest(router, http.MethodPost, "/api/backups", []byte(`{"masked":false}`), adminToken)
+	if adminBackup.Code != http.StatusCreated {
+		t.Fatalf("POST unmasked backup admin status = %d, want %d; body=%s", adminBackup.Code, http.StatusCreated, adminBackup.Body.String())
+	}
+	backupID := decodeID(t, adminBackup.Body.Bytes())
+	limitedBackupDownload := performRequest(router, http.MethodGet, "/api/backups/"+backupID+"/download", nil, limitedToken)
+	if limitedBackupDownload.Code != http.StatusForbidden {
+		t.Fatalf("GET unmasked backup download limited status = %d, want %d; body=%s", limitedBackupDownload.Code, http.StatusForbidden, limitedBackupDownload.Body.String())
+	}
+}
+
 func TestSecuritySchedulerRoutesSmoke(t *testing.T) {
 	t.Parallel()
 
