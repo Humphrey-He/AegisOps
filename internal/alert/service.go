@@ -247,10 +247,12 @@ func (s *Service) dispatch(ctx context.Context, event model.AlertEvent) error {
 				EventID:      event.ID,
 				EventType:    event.EventType,
 				Severity:     string(event.Severity),
+				Status:       string(event.Status),
 				Subject:      "[" + string(event.Severity) + "] " + event.Summary,
 				Body:         event.Detail,
 				ResourceType: event.ResourceType,
 				ResourceID:   event.ResourceID,
+				ResourceName: s.resourceDisplayName(ctx, event.ResourceType, event.ResourceID),
 				TaskID:       event.TaskID,
 				ReleaseID:    event.ReleaseID,
 				Suggestion:   event.Suggestion,
@@ -260,6 +262,35 @@ func (s *Service) dispatch(ctx context.Context, event model.AlertEvent) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) resourceDisplayName(ctx context.Context, resourceType, resourceID string) string {
+	if strings.TrimSpace(resourceID) == "" {
+		return ""
+	}
+	switch strings.TrimSpace(resourceType) {
+	case "host":
+		var item model.Host
+		if err := s.db.WithContext(ctx).Select("name", "address").First(&item, "id = ?", resourceID).Error; err == nil {
+			return firstNonEmpty(item.Name, item.Address, resourceID)
+		}
+	case "service":
+		var item model.ServiceDefinition
+		if err := s.db.WithContext(ctx).Select("name", "code").First(&item, "id = ?", resourceID).Error; err == nil {
+			return firstNonEmpty(item.Name, item.Code, resourceID)
+		}
+	case "docker_node":
+		var item model.DockerNode
+		if err := s.db.WithContext(ctx).Select("name", "endpoint").First(&item, "id = ?", resourceID).Error; err == nil {
+			return firstNonEmpty(item.Name, item.Endpoint, resourceID)
+		}
+	case "nginx_node":
+		var item model.NginxNode
+		if err := s.db.WithContext(ctx).Select("name").First(&item, "id = ?", resourceID).Error; err == nil {
+			return firstNonEmpty(item.Name, resourceID)
+		}
+	}
+	return resourceID
 }
 
 func parseIDs(value string) []string {

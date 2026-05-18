@@ -8,11 +8,12 @@ import (
 )
 
 type Config struct {
-	App      AppConfig      `mapstructure:"app"`
-	HTTP     HTTPConfig     `mapstructure:"http"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Security SecurityConfig `mapstructure:"security"`
-	Admin    AdminConfig    `mapstructure:"admin"`
+	App          AppConfig          `mapstructure:"app"`
+	HTTP         HTTPConfig         `mapstructure:"http"`
+	Database     DatabaseConfig     `mapstructure:"database"`
+	Security     SecurityConfig     `mapstructure:"security"`
+	Admin        AdminConfig        `mapstructure:"admin"`
+	Notification NotificationConfig `mapstructure:"notification"`
 }
 
 type AppConfig struct {
@@ -42,6 +43,11 @@ type AdminConfig struct {
 	Email    string `mapstructure:"email"`
 }
 
+type NotificationConfig struct {
+	TemplateVersion string `mapstructure:"template_version"`
+	PublicBaseURL   string `mapstructure:"public_base_url"`
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -59,6 +65,8 @@ func Load() (*Config, error) {
 	v.SetDefault("database.dsn", "data/aegisops.db")
 	v.SetDefault("security.access_token_ttl", "2h")
 	v.SetDefault("security.refresh_token_ttl", "168h")
+	v.SetDefault("notification.template_version", "v2")
+	v.SetDefault("notification.public_base_url", "http://localhost:4173")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

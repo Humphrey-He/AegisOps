@@ -19,3 +19,7 @@ admin:
   username: admin
   password: admin123456
   email: admin@example.com
+
+notification:
+  template_version: v1
+  public_base_url: "http://localhost:4173"

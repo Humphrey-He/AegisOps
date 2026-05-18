@@ -88,6 +88,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	dockerService := dockersvc.NewService(database, secretService)
 	dockerService.SetTaskService(taskService)
 	notificationService := notificationsvc.NewService(database, secretService)
+	notificationService.SetOptions(notificationsvc.Options{TemplateVersion: cfg.Notification.TemplateVersion, PublicBaseURL: cfg.Notification.PublicBaseURL})
 	alertService := alertsvc.NewService(database, notificationService)
 	healthCheckService := healthsvc.NewService(database, alertService)
 	hostService.SetHealthCheckService(healthCheckService)
