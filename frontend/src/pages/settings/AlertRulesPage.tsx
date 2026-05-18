@@ -1,6 +1,6 @@
 import { App as AntApp, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { DataTable } from "../../components/DataTable";
@@ -38,6 +38,8 @@ const eventTypeOptions = [
   { label: "主机恢复", value: "host_recovered" },
 ] as const;
 
+const eventTypeFilterOptions = [{ label: "全部事件类型", value: "" }, ...eventTypeOptions] as const;
+
 const languageOptions = [
   { label: "跟随通知通道", value: "" },
   { label: "简体中文 · zh-CN", value: "zh-CN" },
@@ -49,6 +51,10 @@ function formatRuleLanguageLabel(language?: NotificationLanguage) {
     return "跟随通知通道";
   }
   return language === "en-US" ? "English" : "简体中文";
+}
+
+function formatEventTypeLabel(eventType?: AlertRule["eventType"]) {
+  return eventTypeOptions.find((item) => item.value === eventType)?.label ?? eventType ?? "--";
 }
 
 function buildFormValues(rule?: AlertRule | null): AlertRuleFormValues {
@@ -73,6 +79,7 @@ export function AlertRulesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AlertRule | null>(null);
+  const eventTypeFilter = searchParams.get("eventType") ?? "";
   const selectedRuleId = searchParams.get("selected") ?? "";
 
   const rulesQuery = useQuery({
@@ -84,8 +91,38 @@ export function AlertRulesPage() {
     queryFn: notificationsApi.listChannels,
   });
 
-  const selectedRule =
-    (rulesQuery.data ?? []).find((item) => item.id === selectedRuleId) ?? rulesQuery.data?.[0] ?? null;
+  const filteredRules = useMemo(() => {
+    const items = rulesQuery.data ?? [];
+    if (!eventTypeFilter) {
+      return items;
+    }
+    return items.filter((item) => item.eventType === eventTypeFilter);
+  }, [eventTypeFilter, rulesQuery.data]);
+
+  const selectedRule = useMemo(() => {
+    if (!filteredRules.length) {
+      return null;
+    }
+    return filteredRules.find((item) => item.id === selectedRuleId) ?? filteredRules[0];
+  }, [filteredRules, selectedRuleId]);
+
+  useEffect(() => {
+    if (!selectedRuleId) {
+      return;
+    }
+    if (filteredRules.some((item) => item.id === selectedRuleId)) {
+      return;
+    }
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (filteredRules[0]?.id) {
+        next.set("selected", filteredRules[0].id);
+      } else {
+        next.delete("selected");
+      }
+      return next;
+    });
+  }, [filteredRules, selectedRuleId, setSearchParams]);
 
   const channelOptions = useMemo(
     () =>
@@ -110,6 +147,9 @@ export function AlertRulesPage() {
       form.resetFields();
       setSearchParams((previous) => {
         const next = new URLSearchParams(previous);
+        if (eventTypeFilter && rule.eventType !== eventTypeFilter) {
+          next.set("eventType", rule.eventType);
+        }
         next.set("selected", rule.id);
         return next;
       });
@@ -169,10 +209,34 @@ export function AlertRulesPage() {
         <div className="resource-workbench">
           <div className="resource-list-pane">
             <Card className="page-card">
+              <div className="page-toolbar">
+                <div className="page-toolbar-start">
+                  <Select
+                    style={{ width: 220 }}
+                    options={eventTypeFilterOptions as unknown as Array<{ label: string; value: string }>}
+                    value={eventTypeFilter}
+                    onChange={(value) =>
+                      setSearchParams((previous) => {
+                        const next = new URLSearchParams(previous);
+                        if (value) {
+                          next.set("eventType", value);
+                        } else {
+                          next.delete("eventType");
+                        }
+                        next.delete("selected");
+                        return next;
+                      })
+                    }
+                  />
+                </div>
+                <Typography.Text type="secondary">
+                  当前显示 {filteredRules.length} / {(rulesQuery.data ?? []).length} 条规则
+                </Typography.Text>
+              </div>
               <DataTable
                 rowKey="id"
                 loading={rulesQuery.isLoading}
-                dataSource={rulesQuery.data}
+                dataSource={filteredRules}
                 rowClassName={(item) => (item.id === selectedRule?.id ? "resource-row-selected" : "")}
                 onRow={(item) => ({
                   onClick: () => {
@@ -190,7 +254,7 @@ export function AlertRulesPage() {
                     render: (_, rule) => (
                       <Space direction="vertical" size={2}>
                         <Typography.Text>{rule.name}</Typography.Text>
-                        <Typography.Text type="secondary">{rule.eventType}</Typography.Text>
+                        <Typography.Text type="secondary">{formatEventTypeLabel(rule.eventType)}</Typography.Text>
                       </Space>
                     ),
                   },
@@ -217,7 +281,7 @@ export function AlertRulesPage() {
           <div className="resource-detail-pane">
             <ResourceDetailPanel
               title={selectedRule?.name}
-              subtitle={selectedRule?.eventType}
+              subtitle={formatEventTypeLabel(selectedRule?.eventType)}
               status={selectedRule ? <StatusBadge status={selectedRule.enabled ? "ACTIVE" : "DISABLED"} /> : undefined}
               meta={
                 selectedRule

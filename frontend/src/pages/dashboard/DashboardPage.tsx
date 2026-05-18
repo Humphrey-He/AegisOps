@@ -11,11 +11,7 @@ import {
   Typography,
 } from "antd";
 import {
-  AlertOutlined,
-  AuditOutlined,
-  ClockCircleOutlined,
   DashboardOutlined,
-  DeploymentUnitOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
@@ -29,12 +25,14 @@ import { alertsApi, dashboardApi } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
 import { queryKeys } from "../../lib/queryKeys";
 import {
+  buildAlertEventsPath,
   buildAuditsPath,
   buildResourcePath,
   formatAuditActor,
   formatAuditResourceName,
   formatAuditSummary,
   formatTaskResourceName,
+  getResourceTypeLabel,
 } from "../../lib/resourceNavigation";
 import { ApiError } from "../../types/api";
 import type { AlertEvent, AuditLog, Task } from "../../types/models";
@@ -51,6 +49,15 @@ const severityMeta: Record<AlertEvent["severity"], { color: string; label: strin
   WARNING: { color: "gold", label: "警告" },
   WARN: { color: "gold", label: "警告" },
   INFO: { color: "blue", label: "信息" },
+};
+
+const alertEventTypeMeta: Record<AlertEvent["eventType"], { color: string; label: string }> = {
+  service_release_failed: { color: "red", label: "发布失败" },
+  service_health_check_failed: { color: "gold", label: "健康检查失败" },
+  nginx_reload_failed: { color: "volcano", label: "Reload 失败" },
+  nginx_publish_failed: { color: "orange", label: "配置发布失败" },
+  host_offline: { color: "red", label: "主机离线" },
+  host_recovered: { color: "green", label: "主机恢复" },
 };
 
 const taskPriorityRank: Record<Task["status"], number> = {
@@ -83,12 +90,43 @@ type ResourceRiskItem = {
   taskId?: string;
 };
 
+type FocusedIncidentSection = {
+  key: string;
+  title: string;
+  helper: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  highlightColor: string;
+  viewAllPath: string;
+  events: AlertEvent[];
+};
+
 function byRecentTimeDesc(left?: string, right?: string) {
   return new Date(right ?? 0).getTime() - new Date(left ?? 0).getTime();
 }
 
 function severityScore(severity?: AlertEvent["severity"]) {
   return severity ? severityRank[severity] ?? 0 : 0;
+}
+
+function getEventDisplayName(event: AlertEvent) {
+  return event.resourceName || event.resourceId || getResourceTypeLabel(event.resourceType);
+}
+
+function buildEventDetailPath(event: AlertEvent) {
+  return buildAlertEventsPath({
+    status: "OPEN",
+    eventType: event.eventType,
+    resourceType: event.resourceType,
+    resourceId: event.resourceId,
+    selected: event.id,
+  });
+}
+
+function deriveFocusedEvents(events: AlertEvent[], eventTypes: AlertEvent["eventType"][]) {
+  return [...events]
+    .filter((event) => eventTypes.includes(event.eventType))
+    .sort((left, right) => byRecentTimeDesc(left.lastTriggeredAt, right.lastTriggeredAt));
 }
 
 function isAttentionTask(task: Task) {
@@ -228,6 +266,21 @@ export function DashboardPage() {
       .slice(0, 5);
   }, [alertEventsQuery.data]);
 
+  const recentReleaseFailures = useMemo(
+    () => deriveFocusedEvents(prioritizedAlertEvents, ["service_release_failed", "service_health_check_failed"]),
+    [prioritizedAlertEvents],
+  );
+
+  const recentHostOfflineEvents = useMemo(
+    () => deriveFocusedEvents(prioritizedAlertEvents, ["host_offline"]),
+    [prioritizedAlertEvents],
+  );
+
+  const recentNginxReloadFailures = useMemo(
+    () => deriveFocusedEvents(prioritizedAlertEvents, ["nginx_reload_failed"]),
+    [prioritizedAlertEvents],
+  );
+
   const attentionTasks = useMemo(() => {
     return [...recentTasks]
       .filter(isAttentionTask)
@@ -259,6 +312,41 @@ export function DashboardPage() {
   const highRiskAuditCount = auditFeed.filter(isHighRiskAudit).length;
   const highestSeverity = prioritizedAlertEvents[0]?.severity;
   const overallTone = buildOverallTone(openAlertCount, failedTaskCount, unhealthyResourceCount);
+  const focusedIncidentSections = useMemo<FocusedIncidentSection[]>(
+    () => [
+      {
+        key: "release-failed",
+        title: "最近发布失败",
+        helper: "聚焦服务发布失败和健康检查失败，快速回看版本发布链路里的异常落点。",
+        emptyTitle: "暂无发布失败",
+        emptyDescription: "当前没有待处理的发布失败或健康检查失败事件。",
+        highlightColor: "red",
+        viewAllPath: buildAlertEventsPath({ status: "OPEN" }),
+        events: recentReleaseFailures,
+      },
+      {
+        key: "host-offline",
+        title: "最近主机离线",
+        helper: "只展示主机离线事件，方便直接回到节点可达性和关联资源上下文。",
+        emptyTitle: "暂无主机离线",
+        emptyDescription: "当前没有待处理的主机离线事件。",
+        highlightColor: "volcano",
+        viewAllPath: buildAlertEventsPath({ status: "OPEN", eventType: "host_offline" }),
+        events: recentHostOfflineEvents,
+      },
+      {
+        key: "nginx-reload-failed",
+        title: "最近 Nginx reload 失败",
+        helper: "聚焦 reload 失败事件，便于继续进入节点详情和对应告警工作区。",
+        emptyTitle: "暂无 Nginx reload 失败",
+        emptyDescription: "当前没有待处理的 Nginx reload 失败事件。",
+        highlightColor: "orange",
+        viewAllPath: buildAlertEventsPath({ status: "OPEN", eventType: "nginx_reload_failed" }),
+        events: recentNginxReloadFailures,
+      },
+    ],
+    [recentHostOfflineEvents, recentNginxReloadFailures, recentReleaseFailures],
+  );
 
   const topAttentionMessage =
     openAlertCount > 0
@@ -350,7 +438,7 @@ export function DashboardPage() {
         showIcon
         icon={overallTone.type === "success" ? <DashboardOutlined /> : <WarningOutlined />}
         message={topAttentionMessage}
-        description="当前首页将优先风险、失败/执行中任务、异常资源与最近审计拆成独立工作区，减少跨页跳转后的上下文丢失。"
+        description="当前首页已把优先风险、最近发布失败、最近主机离线、最近 Nginx reload 失败、失败/执行中任务和最近审计拆成独立工作区，减少跨页跳转后的上下文丢失。"
       />
 
       <Card className="page-card" loading={summaryQuery.isLoading || alertEventsQuery.isLoading}>
@@ -522,6 +610,88 @@ export function DashboardPage() {
                 />
               </Space>
             </Card>
+
+            <Row gutter={[16, 16]}>
+              {focusedIncidentSections.map((section) => (
+                <Col key={section.key} xs={24} lg={12} xxl={8}>
+                  <Card className="page-card" loading={alertEventsQuery.isLoading}>
+                    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                      {renderSectionHeader(
+                        section.title,
+                        section.helper,
+                        <Space size={8}>
+                          {section.events.length ? <Tag color={section.highlightColor}>{`${section.events.length} 条`}</Tag> : null}
+                          <Button type="link" onClick={() => navigate(section.viewAllPath)}>
+                            告警中心
+                          </Button>
+                        </Space>,
+                      )}
+
+                      {alertEventsQuery.isError ? (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          message={`${section.title} 暂时不可用`}
+                          description={alertEventsQuery.error.message}
+                        />
+                      ) : (
+                        <List
+                          size="small"
+                          dataSource={section.events.slice(0, 3)}
+                          locale={{
+                            emptyText: renderEmpty(section.emptyTitle, section.emptyDescription),
+                          }}
+                          renderItem={(event) => {
+                            const resourcePath = buildResourcePath(event.resourceType, event.resourceId);
+                            const detailPath = buildEventDetailPath(event);
+                            const eventMeta = alertEventTypeMeta[event.eventType];
+                            const severity = severityMeta[event.severity];
+                            return (
+                              <List.Item
+                                actions={[
+                                  <Button key="alert" type="link" onClick={() => navigate(detailPath)}>
+                                    告警详情
+                                  </Button>,
+                                  resourcePath ? (
+                                    <Button key="resource" type="link" onClick={() => navigate(resourcePath)}>
+                                      资源
+                                    </Button>
+                                  ) : null,
+                                ].filter(Boolean)}
+                              >
+                                <List.Item.Meta
+                                  title={
+                                    <Space size={[8, 8]} wrap>
+                                      <Typography.Text strong>{getEventDisplayName(event)}</Typography.Text>
+                                      <Tag color={eventMeta.color}>{eventMeta.label}</Tag>
+                                      <Tag color={severity.color}>{severity.label}</Tag>
+                                      <StatusBadge status={event.status} />
+                                    </Space>
+                                  }
+                                  description={
+                                    <Space direction="vertical" size={4}>
+                                      <Typography.Text type="secondary">
+                                        {`${getResourceTypeLabel(event.resourceType)} · 最近触发 ${formatDateTime(event.lastTriggeredAt)}`}
+                                      </Typography.Text>
+                                      <Typography.Text>{event.detail || event.summary || eventMeta.label}</Typography.Text>
+                                      {event.suggestedRollbackVersion ? (
+                                        <Typography.Text type="secondary">
+                                          {`建议回滚至 ${event.suggestedRollbackVersion}`}
+                                        </Typography.Text>
+                                      ) : null}
+                                    </Space>
+                                  }
+                                />
+                              </List.Item>
+                            );
+                          }}
+                        />
+                      )}
+                    </Space>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
 
             <Card className="page-card" loading={alertEventsQuery.isLoading}>
               <Space direction="vertical" size={16} style={{ width: "100%" }}>
