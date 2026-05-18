@@ -119,7 +119,9 @@ func (s *Service) ListWithFilter(ctx context.Context, filter ListFilter, limit, 
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&items).Error
+	err := query.Preload("Dispatches", func(db *gorm.DB) *gorm.DB {
+		return db.Order("queued_at DESC, created_at DESC")
+	}).Order("created_at DESC").Limit(limit).Offset(offset).Find(&items).Error
 	return items, total, err
 }
 
@@ -129,6 +131,8 @@ func (s *Service) Get(ctx context.Context, id string) (*model.Task, error) {
 		return db.Order("sort_order ASC, created_at ASC")
 	}).Preload("Logs", func(db *gorm.DB) *gorm.DB {
 		return db.Order("created_at ASC")
+	}).Preload("Dispatches", func(db *gorm.DB) *gorm.DB {
+		return db.Order("queued_at DESC, created_at DESC")
 	}).First(&item, "id = ?", id).Error; err != nil {
 		return nil, err
 	}

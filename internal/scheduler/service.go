@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,7 +14,8 @@ import (
 )
 
 type Service struct {
-	db *gorm.DB
+	db  *gorm.DB
+	now func() time.Time
 }
 
 type JobRequest struct {
@@ -31,7 +33,7 @@ type JobRequest struct {
 }
 
 func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+	return &Service{db: db, now: time.Now}
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]model.ScheduledJob, int64, error) {
@@ -65,12 +67,17 @@ func (s *Service) Create(ctx context.Context, req JobRequest) (*model.ScheduledJ
 	if timeout <= 0 {
 		timeout = 300
 	}
+	cronExpr := strings.TrimSpace(req.CronExpr)
+	next, err := s.nextRun(cronExpr, s.now().UTC())
+	if err != nil {
+		return nil, err
+	}
 	item := &model.ScheduledJob{
 		ID:              uuid.NewString(),
 		Name:            strings.TrimSpace(req.Name),
 		Type:            strings.TrimSpace(req.Type),
 		Enabled:         enabled,
-		CronExpr:        strings.TrimSpace(req.CronExpr),
+		CronExpr:        cronExpr,
 		TargetType:      strings.TrimSpace(req.TargetType),
 		TargetID:        strings.TrimSpace(req.TargetID),
 		PayloadJSON:     strings.TrimSpace(req.PayloadJSON),
@@ -83,9 +90,11 @@ func (s *Service) Create(ctx context.Context, req JobRequest) (*model.ScheduledJ
 	if item.Name == "" || item.Type == "" || item.CronExpr == "" {
 		return nil, fmt.Errorf("scheduled job name, type and cronExpr are required")
 	}
-	next := time.Now().UTC().Add(time.Minute)
 	item.NextRunAt = &next
-	return item, s.db.WithContext(ctx).Create(item).Error
+	if err := s.createScheduledJob(ctx, item); err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func (s *Service) Update(ctx context.Context, id string, req JobRequest) (*model.ScheduledJob, error) {
@@ -103,7 +112,13 @@ func (s *Service) Update(ctx context.Context, id string, req JobRequest) (*model
 		item.Enabled = *req.Enabled
 	}
 	if req.CronExpr != "" {
-		item.CronExpr = strings.TrimSpace(req.CronExpr)
+		cronExpr := strings.TrimSpace(req.CronExpr)
+		next, err := s.nextRun(cronExpr, s.now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		item.CronExpr = cronExpr
+		item.NextRunAt = &next
 	}
 	item.TargetType = strings.TrimSpace(req.TargetType)
 	item.TargetID = strings.TrimSpace(req.TargetID)
@@ -122,8 +137,170 @@ func (s *Service) Update(ctx context.Context, id string, req JobRequest) (*model
 	return item, nil
 }
 
+func (s *Service) DispatchDueJobs(ctx context.Context, limit int) ([]model.TaskDispatch, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	now := s.now().UTC()
+	var jobs []model.ScheduledJob
+	if err := s.db.WithContext(ctx).Where("enabled = ? AND next_run_at IS NOT NULL AND next_run_at <= ?", true, now).
+		Order("next_run_at ASC").
+		Limit(limit).
+		Find(&jobs).Error; err != nil {
+		return nil, err
+	}
+	dispatches := make([]model.TaskDispatch, 0, len(jobs))
+	for _, job := range jobs {
+		dispatch, err := s.enqueueJobRun(ctx, job, now)
+		if err != nil {
+			return nil, err
+		}
+		if dispatch != nil {
+			dispatches = append(dispatches, *dispatch)
+		}
+	}
+	return dispatches, nil
+}
+
+func (s *Service) enqueueJobRun(ctx context.Context, job model.ScheduledJob, now time.Time) (*model.TaskDispatch, error) {
+	var dispatch *model.TaskDispatch
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedJob model.ScheduledJob
+		if err := tx.First(&lockedJob, "id = ?", job.ID).Error; err != nil {
+			return err
+		}
+		if !lockedJob.Enabled || lockedJob.NextRunAt == nil || lockedJob.NextRunAt.After(now) {
+			return nil
+		}
+		if lockedJob.ConcurrencyKey != "" {
+			var count int64
+			if err := tx.Model(&model.TaskDispatch{}).Where("concurrency_key = ? AND status IN ?", lockedJob.ConcurrencyKey, []model.TaskDispatchStatus{
+				model.TaskDispatchStatusPending,
+				model.TaskDispatchStatusDispatched,
+				model.TaskDispatchStatusRunning,
+			}).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				next, err := s.nextRun(lockedJob.CronExpr, now)
+				if err != nil {
+					return err
+				}
+				return tx.Model(&model.ScheduledJob{}).Where("id = ?", lockedJob.ID).Updates(map[string]any{
+					"last_run_at": &now,
+					"next_run_at": &next,
+				}).Error
+			}
+		}
+		task := model.Task{
+			ID:         uuid.NewString(),
+			Type:       lockedJob.Type,
+			Title:      lockedJob.Name,
+			Status:     model.TaskStatusPending,
+			TargetType: lockedJob.TargetType,
+			TargetID:   lockedJob.TargetID,
+			Payload:    lockedJob.PayloadJSON,
+			CreatedBy:  lockedJob.UpdatedBy,
+		}
+		if err := tx.Create(&task).Error; err != nil {
+			return err
+		}
+		item := model.TaskDispatch{
+			ID:             uuid.NewString(),
+			TaskID:         task.ID,
+			Source:         model.TaskDispatchSourceScheduled,
+			JobID:          lockedJob.ID,
+			Status:         model.TaskDispatchStatusPending,
+			RetryCount:     0,
+			MaxRetry:       maxRetryFromPolicy(lockedJob.RetryPolicyJSON),
+			TimeoutSeconds: lockedJob.TimeoutSeconds,
+			ConcurrencyKey: lockedJob.ConcurrencyKey,
+			QueuedAt:       now,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			return err
+		}
+		next, err := s.nextRun(lockedJob.CronExpr, now)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ScheduledJob{}).Where("id = ?", lockedJob.ID).Updates(map[string]any{
+			"last_run_at": &now,
+			"next_run_at": &next,
+		}).Error; err != nil {
+			return err
+		}
+		dispatch = &item
+		return nil
+	})
+	return dispatch, err
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Delete(&model.ScheduledJob{}, "id = ?", id).Error
+}
+
+func (s *Service) createScheduledJob(ctx context.Context, item *model.ScheduledJob) error {
+	enabled := item.Enabled
+	if err := s.db.WithContext(ctx).Create(item).Error; err != nil {
+		return err
+	}
+	item.Enabled = enabled
+	return s.db.WithContext(ctx).Model(&model.ScheduledJob{}).Where("id = ?", item.ID).Update("enabled", enabled).Error
+}
+
+func (s *Service) nextRun(expr string, from time.Time) (time.Time, error) {
+	interval, err := parseCronInterval(expr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	next := from.Truncate(time.Minute).Add(interval)
+	if !next.After(from) {
+		next = next.Add(interval)
+	}
+	return next.UTC(), nil
+}
+
+func parseCronInterval(expr string) (time.Duration, error) {
+	fields := strings.Fields(strings.TrimSpace(expr))
+	if len(fields) != 5 {
+		return 0, fmt.Errorf("cronExpr must contain 5 fields")
+	}
+	if fields[1] != "*" || fields[2] != "*" || fields[3] != "*" || fields[4] != "*" {
+		return 0, fmt.Errorf("only minute interval cron expressions are supported")
+	}
+	minute := fields[0]
+	if minute == "*" {
+		return time.Minute, nil
+	}
+	if strings.HasPrefix(minute, "*/") {
+		value, err := strconv.Atoi(strings.TrimPrefix(minute, "*/"))
+		if err != nil || value <= 0 || value > 1440 {
+			return 0, fmt.Errorf("invalid cron minute interval")
+		}
+		return time.Duration(value) * time.Minute, nil
+	}
+	value, err := strconv.Atoi(minute)
+	if err != nil || value < 0 || value > 59 {
+		return 0, fmt.Errorf("invalid cron minute value")
+	}
+	return time.Hour, nil
+}
+
+func maxRetryFromPolicy(policy string) int {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return 0
+	}
+	for _, part := range strings.FieldsFunc(policy, func(r rune) bool {
+		return r == ',' || r == ';' || r == '{' || r == '}' || r == '"' || r == ' '
+	}) {
+		if strings.HasPrefix(part, "maxRetry:") {
+			value, _ := strconv.Atoi(strings.TrimPrefix(part, "maxRetry:"))
+			return value
+		}
+	}
+	return 0
 }
 
 func firstNonEmpty(values ...string) string {

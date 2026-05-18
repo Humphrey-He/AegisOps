@@ -13,23 +13,24 @@ const (
 )
 
 type Task struct {
-	ID         string     `gorm:"primaryKey;size:36" json:"id"`
-	Type       string     `gorm:"size:64;not null;index" json:"type"`
-	Title      string     `gorm:"size:255;not null" json:"title"`
-	Status     TaskStatus `gorm:"size:32;not null;default:PENDING;index" json:"status"`
-	TargetType string     `gorm:"size:64;index" json:"targetType"`
-	TargetID   string     `gorm:"size:128;index" json:"targetId"`
-	Payload    string     `gorm:"type:text" json:"payload"`
-	Result     string     `gorm:"type:text" json:"result"`
-	Error      string     `gorm:"type:text" json:"error"`
-	StartedAt  *time.Time `json:"startedAt"`
-	FinishedAt *time.Time `json:"finishedAt"`
-	CreatedBy  string     `gorm:"size:36;index" json:"createdBy"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
-	DeletedAt  *time.Time `gorm:"index" json:"-"`
-	Steps      []TaskStep `gorm:"foreignKey:TaskID" json:"steps,omitempty"`
-	Logs       []TaskLog  `gorm:"foreignKey:TaskID" json:"logs,omitempty"`
+	ID         string         `gorm:"primaryKey;size:36" json:"id"`
+	Type       string         `gorm:"size:64;not null;index" json:"type"`
+	Title      string         `gorm:"size:255;not null" json:"title"`
+	Status     TaskStatus     `gorm:"size:32;not null;default:PENDING;index" json:"status"`
+	TargetType string         `gorm:"size:64;index" json:"targetType"`
+	TargetID   string         `gorm:"size:128;index" json:"targetId"`
+	Payload    string         `gorm:"type:text" json:"payload"`
+	Result     string         `gorm:"type:text" json:"result"`
+	Error      string         `gorm:"type:text" json:"error"`
+	StartedAt  *time.Time     `json:"startedAt"`
+	FinishedAt *time.Time     `json:"finishedAt"`
+	CreatedBy  string         `gorm:"size:36;index" json:"createdBy"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
+	DeletedAt  *time.Time     `gorm:"index" json:"-"`
+	Steps      []TaskStep     `gorm:"foreignKey:TaskID" json:"steps,omitempty"`
+	Logs       []TaskLog      `gorm:"foreignKey:TaskID" json:"logs,omitempty"`
+	Dispatches []TaskDispatch `gorm:"foreignKey:TaskID" json:"dispatches,omitempty"`
 }
 
 type TaskStep struct {
