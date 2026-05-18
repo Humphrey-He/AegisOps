@@ -62,6 +62,9 @@ export function AppShell() {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [quickJumpKeyword, setQuickJumpKeyword] = useState("");
+  const isLocalEnvironment =
+    typeof window !== "undefined" &&
+    ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname.toLowerCase());
 
   const visibleNavItems = useMemo(() => filterNavItems(navItems, permissions), [permissions]);
   const menuItems = useMemo(() => toMenuItems(visibleNavItems), [visibleNavItems]);
@@ -98,9 +101,9 @@ export function AppShell() {
     },
   ];
 
-  const environmentLabel = USE_MOCK ? "Demo" : "Production";
-  const environmentTone = USE_MOCK ? "gold" : "green";
-  const connectionLabel = USE_MOCK ? "Mock 数据源" : "API 已连接";
+  const environmentLabel = USE_MOCK ? "Demo" : isLocalEnvironment ? "Local" : "Production";
+  const environmentTone = USE_MOCK ? "gold" : isLocalEnvironment ? "blue" : "green";
+  const connectionLabel = USE_MOCK ? "Mock 数据源" : isLocalEnvironment ? "Local API 已连接" : "API 已连接";
 
   return (
     <Layout style={{ minHeight: "100vh" }}>

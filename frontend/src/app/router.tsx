@@ -1,9 +1,9 @@
-import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 import { Suspense, lazy } from "react";
+import { Navigate, createBrowserRouter, useLocation } from "react-router-dom";
 
+import { PermissionGuard } from "../components/PermissionGuard";
 import { AppShell } from "../layouts/AppShell";
 import { useSessionStore } from "../store/sessionStore";
-import { PermissionGuard } from "../components/PermissionGuard";
 
 const LoginPage = lazy(() => import("../pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
 const SetupAdminPage = lazy(() => import("../pages/auth/SetupAdminPage").then((module) => ({ default: module.SetupAdminPage })));
@@ -13,9 +13,13 @@ const SecretsPage = lazy(() => import("../pages/secrets/SecretsPage").then((modu
 const RegistriesPage = lazy(() => import("../pages/registries/RegistriesPage").then((module) => ({ default: module.RegistriesPage })));
 const ServicesPage = lazy(() => import("../pages/services/ServicesPage").then((module) => ({ default: module.ServicesPage })));
 const DockerNodesPage = lazy(() => import("../pages/docker/DockerNodesPage").then((module) => ({ default: module.DockerNodesPage })));
-const DockerNodeDetailPage = lazy(() => import("../pages/docker/DockerNodeDetailPage").then((module) => ({ default: module.DockerNodeDetailPage })));
+const DockerNodeDetailPage = lazy(() =>
+  import("../pages/docker/DockerNodeDetailPage").then((module) => ({ default: module.DockerNodeDetailPage })),
+);
 const NginxNodesPage = lazy(() => import("../pages/nginx/NginxNodesPage").then((module) => ({ default: module.NginxNodesPage })));
-const NotificationsPage = lazy(() => import("../pages/settings/NotificationsPage").then((module) => ({ default: module.NotificationsPage })));
+const NotificationsPage = lazy(() =>
+  import("../pages/settings/NotificationsPage").then((module) => ({ default: module.NotificationsPage })),
+);
 const AlertRulesPage = lazy(() => import("../pages/settings/AlertRulesPage").then((module) => ({ default: module.AlertRulesPage })));
 const AlertEventsPage = lazy(() => import("../pages/alerts/AlertEventsPage").then((module) => ({ default: module.AlertEventsPage })));
 const TasksPage = lazy(() => import("../pages/tasks/TasksPage").then((module) => ({ default: module.TasksPage })));
@@ -122,7 +126,7 @@ export const router = createBrowserRouter([
             </LazyPage>
           </RequirePermission>
         ),
-        handle: { title: "Registry" },
+        handle: { title: "镜像仓库" },
       },
       {
         path: "delivery/services",
@@ -166,7 +170,7 @@ export const router = createBrowserRouter([
             </LazyPage>
           </RequirePermission>
         ),
-        handle: { title: "Nginx" },
+        handle: { title: "Nginx 节点" },
       },
       {
         path: "settings/notifications",
@@ -232,7 +236,7 @@ export const router = createBrowserRouter([
             </LazyPage>
           </RequirePermission>
         ),
-        handle: { title: "审计日志" },
+        handle: { title: "操作审计" },
       },
       {
         path: "system/users",

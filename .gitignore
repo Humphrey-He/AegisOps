@@ -13,3 +13,4 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 *.out.log
 *.err.log
+artifacts/

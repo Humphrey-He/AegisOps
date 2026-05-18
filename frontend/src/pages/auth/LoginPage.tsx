@@ -1,4 +1,4 @@
-import { Button, Card, Form, Input, Space, Typography, App as AntApp } from "antd";
+import { App as AntApp, Button, Card, Form, Input, Space, Typography } from "antd";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authApi } from "../../lib/api";
@@ -44,12 +44,7 @@ export function LoginPage() {
             </Typography.Text>
           </Space>
 
-          <Form
-            layout="vertical"
-            form={form}
-            initialValues={{ username: "admin", password: "admin123456" }}
-            onFinish={(values) => loginMutation.mutate(values)}
-          >
+          <Form layout="vertical" form={form} onFinish={(values) => loginMutation.mutate(values)}>
             <Form.Item label="用户名" name="username" rules={[{ required: true, message: "请输入用户名" }]}>
               <Input autoFocus />
             </Form.Item>
