@@ -29,6 +29,9 @@ func (h *AuditHandler) List(c *gin.Context) {
 	if resourceType := c.Query("resourceType"); resourceType != "" {
 		query = query.Where("resource_type = ?", resourceType)
 	}
+	if resourceID := c.Query("resourceId"); resourceID != "" {
+		query = query.Where("resource_id = ?", resourceID)
+	}
 	if result := c.Query("result"); result != "" {
 		query = query.Where("result = ?", result)
 	}

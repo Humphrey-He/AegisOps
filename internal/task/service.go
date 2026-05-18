@@ -32,6 +32,12 @@ type CreateStepRequest struct {
 	SortOrder int    `json:"sortOrder"`
 }
 
+type ListFilter struct {
+	Status     string
+	TargetType string
+	TargetID   string
+}
+
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
@@ -91,11 +97,21 @@ func (s *Service) CreateWithStatus(ctx context.Context, req CreateRequest, statu
 }
 
 func (s *Service) List(ctx context.Context, status string, limit, offset int) ([]model.Task, int64, error) {
+	return s.ListWithFilter(ctx, ListFilter{Status: status}, limit, offset)
+}
+
+func (s *Service) ListWithFilter(ctx context.Context, filter ListFilter, limit, offset int) ([]model.Task, int64, error) {
 	var items []model.Task
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.Task{})
-	if status != "" {
-		query = query.Where("status = ?", status)
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.TargetType != "" {
+		query = query.Where("target_type = ?", filter.TargetType)
+	}
+	if filter.TargetID != "" {
+		query = query.Where("target_id = ?", filter.TargetID)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

@@ -30,12 +30,27 @@ func (h *TaskHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
 
 func (h *TaskHandler) List(c *gin.Context) {
 	limit, offset := Pagination(c)
-	items, total, err := h.service.List(c.Request.Context(), c.Query("status"), limit, offset)
+	targetType := firstQuery(c, "targetType", "resourceType")
+	targetID := firstQuery(c, "targetId", "resourceId")
+	items, total, err := h.service.ListWithFilter(c.Request.Context(), task.ListFilter{
+		Status:     c.Query("status"),
+		TargetType: targetType,
+		TargetID:   targetID,
+	}, limit, offset)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	OK(c, PageResult{Items: items, Total: total, Limit: limit, Offset: offset})
+}
+
+func firstQuery(c *gin.Context, names ...string) string {
+	for _, name := range names {
+		if value := c.Query(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {

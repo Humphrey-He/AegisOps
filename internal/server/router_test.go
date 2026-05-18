@@ -314,6 +314,190 @@ func TestSystemRoutesRequireRBAC(t *testing.T) {
 	}
 }
 
+func TestResourceWorkbenchFiltersTasksAndAudits(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	createHostTask := performRequest(router, http.MethodPost, "/api/tasks", []byte(`{
+		"type":"host.ssh.test",
+		"title":"host task",
+		"targetType":"host",
+		"targetId":"host-workbench-1"
+	}`), token)
+	if createHostTask.Code != http.StatusCreated {
+		t.Fatalf("POST /api/tasks host status = %d, want %d; body=%s", createHostTask.Code, http.StatusCreated, createHostTask.Body.String())
+	}
+	createDockerTask := performRequest(router, http.MethodPost, "/api/tasks", []byte(`{
+		"type":"docker.node.test",
+		"title":"docker task",
+		"targetType":"docker_node",
+		"targetId":"docker-workbench-1"
+	}`), token)
+	if createDockerTask.Code != http.StatusCreated {
+		t.Fatalf("POST /api/tasks docker status = %d, want %d; body=%s", createDockerTask.Code, http.StatusCreated, createDockerTask.Body.String())
+	}
+
+	if err := database.Create(&model.AuditLog{Username: "admin", Action: "host.test_ssh", ResourceType: "host", ResourceID: "host-workbench-1", Result: model.AuditResultSuccess}).Error; err != nil {
+		t.Fatalf("create host audit: %v", err)
+	}
+	if err := database.Create(&model.AuditLog{Username: "admin", Action: "docker_node.test", ResourceType: "docker_node", ResourceID: "docker-workbench-1", Result: model.AuditResultSuccess}).Error; err != nil {
+		t.Fatalf("create docker audit: %v", err)
+	}
+
+	tasksResp := performRequest(router, http.MethodGet, "/api/tasks?resourceType=host&resourceId=host-workbench-1", nil, token)
+	if tasksResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/tasks resource filter status = %d, want %d; body=%s", tasksResp.Code, http.StatusOK, tasksResp.Body.String())
+	}
+	var tasksPayload struct {
+		Data struct {
+			Items []model.Task `json:"items"`
+			Total int64        `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tasksResp.Body.Bytes(), &tasksPayload); err != nil {
+		t.Fatalf("decode tasks payload: %v", err)
+	}
+	if tasksPayload.Data.Total != 1 || len(tasksPayload.Data.Items) != 1 || tasksPayload.Data.Items[0].TargetID != "host-workbench-1" {
+		t.Fatalf("filtered tasks = %+v total=%d, want only host-workbench-1", tasksPayload.Data.Items, tasksPayload.Data.Total)
+	}
+	tasksAliasResp := performRequest(router, http.MethodGet, "/api/tasks?targetType=docker_node&targetId=docker-workbench-1", nil, token)
+	if tasksAliasResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/tasks target filter status = %d, want %d; body=%s", tasksAliasResp.Code, http.StatusOK, tasksAliasResp.Body.String())
+	}
+	var tasksAliasPayload struct {
+		Data struct {
+			Items []model.Task `json:"items"`
+			Total int64        `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tasksAliasResp.Body.Bytes(), &tasksAliasPayload); err != nil {
+		t.Fatalf("decode tasks alias payload: %v", err)
+	}
+	if tasksAliasPayload.Data.Total != 1 || len(tasksAliasPayload.Data.Items) != 1 || tasksAliasPayload.Data.Items[0].TargetID != "docker-workbench-1" {
+		t.Fatalf("filtered alias tasks = %+v total=%d, want only docker-workbench-1", tasksAliasPayload.Data.Items, tasksAliasPayload.Data.Total)
+	}
+
+	auditsResp := performRequest(router, http.MethodGet, "/api/audits?resourceType=host&resourceId=host-workbench-1", nil, token)
+	if auditsResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/audits resource filter status = %d, want %d; body=%s", auditsResp.Code, http.StatusOK, auditsResp.Body.String())
+	}
+	var auditsPayload struct {
+		Data struct {
+			Items []model.AuditLog `json:"items"`
+			Total int64            `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(auditsResp.Body.Bytes(), &auditsPayload); err != nil {
+		t.Fatalf("decode audits payload: %v", err)
+	}
+	if auditsPayload.Data.Total != 1 || len(auditsPayload.Data.Items) != 1 || auditsPayload.Data.Items[0].ResourceID != "host-workbench-1" {
+		t.Fatalf("filtered audits = %+v total=%d, want only host-workbench-1", auditsPayload.Data.Items, auditsPayload.Data.Total)
+	}
+}
+
+func TestDashboardRiskAndResourceContext(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	host := model.Host{ID: "risk-host-1", Name: "Risk Host", Address: "10.0.0.8", SSHPort: 22, SSHUser: "root", SSHSecretID: "secret-1", Status: model.HostStatusOffline}
+	if err := database.Create(&host).Error; err != nil {
+		t.Fatalf("create host: %v", err)
+	}
+	task := model.Task{ID: "risk-task-1", Type: "host.ssh.test", Title: "risk host ssh", Status: model.TaskStatusFailed, TargetType: "host", TargetID: host.ID, Error: "connect timeout"}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	alert := model.AlertEvent{ID: "risk-alert-1", EventType: "host_unreachable", ResourceType: "host", ResourceID: host.ID, TaskID: task.ID, Severity: model.AlertEventSeverityCritical, Status: model.AlertEventStatusOpen, Summary: "host unreachable", FirstTriggeredAt: time.Now().UTC(), LastTriggeredAt: time.Now().UTC()}
+	if err := database.Create(&alert).Error; err != nil {
+		t.Fatalf("create alert: %v", err)
+	}
+	auditLog := model.AuditLog{Username: "admin", Action: "secret.delete", ResourceType: "host", ResourceID: host.ID, Result: model.AuditResultSuccess}
+	if err := database.Create(&auditLog).Error; err != nil {
+		t.Fatalf("create audit: %v", err)
+	}
+
+	summaryResp := performRequest(router, http.MethodGet, "/api/dashboard/summary", nil, token)
+	if summaryResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/dashboard/summary status = %d, want %d; body=%s", summaryResp.Code, http.StatusOK, summaryResp.Body.String())
+	}
+	var summaryPayload struct {
+		Data struct {
+			OpenAlertCount         int64 `json:"openAlertCount"`
+			FailedTaskCount        int64 `json:"failedTaskCount"`
+			HighRiskAuditCount     int64 `json:"highRiskAuditCount"`
+			UnhealthyResourceCount int64 `json:"unhealthyResourceCount"`
+			OpenAlerts             []model.AlertEvent
+			FailedTasks            []model.Task     `json:"failedTasks"`
+			UnhealthyResources     []map[string]any `json:"unhealthyResources"`
+			HighRiskAudits         []model.AuditLog `json:"highRiskAudits"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(summaryResp.Body.Bytes(), &summaryPayload); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if summaryPayload.Data.OpenAlertCount == 0 || summaryPayload.Data.FailedTaskCount == 0 || summaryPayload.Data.HighRiskAuditCount == 0 || summaryPayload.Data.UnhealthyResourceCount == 0 {
+		t.Fatalf("summary counts missing risk data: %+v", summaryPayload.Data)
+	}
+	if len(summaryPayload.Data.OpenAlerts) == 0 || len(summaryPayload.Data.FailedTasks) == 0 || len(summaryPayload.Data.UnhealthyResources) == 0 || len(summaryPayload.Data.HighRiskAudits) == 0 {
+		t.Fatalf("summary risk lists missing data: %+v", summaryPayload.Data)
+	}
+
+	contextResp := performRequest(router, http.MethodGet, "/api/resources/context?resourceType=host&resourceId="+host.ID, nil, token)
+	if contextResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/resources/context status = %d, want %d; body=%s", contextResp.Code, http.StatusOK, contextResp.Body.String())
+	}
+	var contextPayload struct {
+		Data struct {
+			ResourceType string             `json:"resourceType"`
+			ResourceID   string             `json:"resourceId"`
+			RecentTasks  []model.Task       `json:"recentTasks"`
+			RecentAudits []model.AuditLog   `json:"recentAudits"`
+			RecentAlerts []model.AlertEvent `json:"recentAlerts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(contextResp.Body.Bytes(), &contextPayload); err != nil {
+		t.Fatalf("decode resource context: %v", err)
+	}
+	if contextPayload.Data.ResourceType != "host" || contextPayload.Data.ResourceID != host.ID {
+		t.Fatalf("resource context identity = %s/%s, want host/%s", contextPayload.Data.ResourceType, contextPayload.Data.ResourceID, host.ID)
+	}
+	if len(contextPayload.Data.RecentTasks) != 1 || len(contextPayload.Data.RecentAudits) != 1 || len(contextPayload.Data.RecentAlerts) != 1 {
+		t.Fatalf("resource context lists = tasks:%d audits:%d alerts:%d, want 1 each", len(contextPayload.Data.RecentTasks), len(contextPayload.Data.RecentAudits), len(contextPayload.Data.RecentAlerts))
+	}
+}
+
 func TestPermissionsEndpointBackfillsMissingSeedPermissions(t *testing.T) {
 	t.Parallel()
 

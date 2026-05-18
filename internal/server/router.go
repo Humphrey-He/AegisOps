@@ -133,6 +133,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	handler.RegisterUserRoleAuditRoutes(api, authMiddleware, rbacService, userHandler, roleHandler, auditHandler)
 	protected := api.Group("", authMiddleware)
 	protected.GET("/dashboard/summary", rbac.RequirePermission(rbacService, "dashboard.view"), dashboardHandler.Summary)
+	protected.GET("/resources/context", rbac.RequirePermission(rbacService, "dashboard.view"), dashboardHandler.ResourceContext)
 	secretHandler.RegisterRoutes(protected, rbacService)
 	hostHandler.RegisterRoutes(protected, rbacService)
 	taskHandler.RegisterRoutes(protected, rbacService)
