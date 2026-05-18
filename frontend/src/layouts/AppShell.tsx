@@ -22,7 +22,7 @@ import {
   Typography,
 } from "antd";
 import type { MenuProps } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation, useMatches, useNavigate } from "react-router-dom";
 import { filterNavItems, navItems, type NavItem } from "../app/navigation";
 import { authApi } from "../lib/api";
@@ -47,9 +47,29 @@ function flattenNavItems(items: NavItem[]): Array<{ key: string; label: string }
   );
 }
 
+function collectOpenKeys(items: NavItem[]): string[] {
+  return items.flatMap((item) => (item.children?.length ? [item.key, ...collectOpenKeys(item.children)] : []));
+}
+
 function findSelectedKey(pathname: string, items: NavItem[]): string {
-  const leaves = items.flatMap((item) => (item.children?.length ? item.children : [item]));
+  const leaves = items.flatMap((item) => (item.children?.length ? flattenNavItems(item.children) : [item]));
   return leaves.find((item) => pathname.startsWith(item.key))?.key ?? pathname;
+}
+
+function findSelectedParentKeys(pathname: string, items: NavItem[], parents: string[] = []): string[] {
+  for (const item of items) {
+    if (item.children?.length) {
+      const matchedParents = findSelectedParentKeys(pathname, item.children, [...parents, item.key]);
+      if (matchedParents.length) {
+        return matchedParents;
+      }
+      continue;
+    }
+    if (pathname.startsWith(item.key)) {
+      return parents;
+    }
+  }
+  return [];
 }
 
 export function AppShell() {
@@ -62,17 +82,31 @@ export function AppShell() {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [quickJumpKeyword, setQuickJumpKeyword] = useState("");
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
   const isLocalEnvironment =
     typeof window !== "undefined" &&
     ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname.toLowerCase());
 
   const visibleNavItems = useMemo(() => filterNavItems(navItems, permissions), [permissions]);
   const menuItems = useMemo(() => toMenuItems(visibleNavItems), [visibleNavItems]);
+  const defaultOpenKeys = useMemo(() => collectOpenKeys(visibleNavItems), [visibleNavItems]);
   const quickJumpOptions = useMemo(
     () => flattenNavItems(visibleNavItems).map((item) => ({ value: item.key, label: item.label })),
     [visibleNavItems],
   );
   const selectedKey = findSelectedKey(location.pathname, visibleNavItems);
+  const selectedParentKeys = useMemo(
+    () => findSelectedParentKeys(location.pathname, visibleNavItems),
+    [location.pathname, visibleNavItems],
+  );
+
+  useEffect(() => {
+    setOpenKeys((current) => Array.from(new Set([...current, ...selectedParentKeys])));
+  }, [selectedParentKeys]);
+
+  useEffect(() => {
+    setOpenKeys((current) => current.filter((key) => defaultOpenKeys.includes(key)));
+  }, [defaultOpenKeys]);
 
   const breadcrumbItems = matches
     .filter((match) => (match.handle as { title?: string } | undefined)?.title)
@@ -106,7 +140,7 @@ export function AppShell() {
   const connectionLabel = USE_MOCK ? "Mock 数据源" : isLocalEnvironment ? "Local API 已连接" : "API 已连接";
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
+    <Layout className="app-shell-root" style={{ minHeight: "100vh" }}>
       <Sider
         trigger={null}
         collapsible
@@ -129,11 +163,14 @@ export function AppShell() {
         </Link>
 
         <Menu
+          className="app-shell-menu"
           mode="inline"
           inlineCollapsed={collapsed}
           selectedKeys={[selectedKey]}
-          defaultOpenKeys={["assets", "docker", "delivery", "alerts", "settings", "system"]}
+          openKeys={collapsed ? undefined : openKeys}
+          defaultOpenKeys={defaultOpenKeys}
           items={menuItems}
+          onOpenChange={(keys) => setOpenKeys(keys)}
           style={{ borderInlineEnd: 0 }}
         />
       </Sider>
