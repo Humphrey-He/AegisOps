@@ -1197,6 +1197,106 @@ func TestNotificationLegacyConfigIsSecretized(t *testing.T) {
 	}
 }
 
+func TestSecretRotationRequiresDedicatedPermission(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	adminToken := loginAndToken(t, router)
+
+	createSecret := performRequest(router, http.MethodPost, "/api/secrets", []byte(`{
+		"name":"Rotate Secret",
+		"type":"API_TOKEN",
+		"purpose":"test",
+		"value":"initial-token"
+	}`), adminToken)
+	if createSecret.Code != http.StatusCreated {
+		t.Fatalf("POST /api/secrets status = %d, want %d; body=%s", createSecret.Code, http.StatusCreated, createSecret.Body.String())
+	}
+	secretID := decodeID(t, createSecret.Body.Bytes())
+
+	createUser := performRequest(router, http.MethodPost, "/api/users", []byte(`{
+		"username":"secretmgr",
+		"password":"plain123456",
+		"displayName":"Secret Manager",
+		"status":"active"
+	}`), adminToken)
+	if createUser.Code != http.StatusCreated {
+		t.Fatalf("POST /api/users status = %d, want %d; body=%s", createUser.Code, http.StatusCreated, createUser.Body.String())
+	}
+	role := model.Role{Name: "Secret Manager", Code: "secret-manager"}
+	if err := database.Create(&role).Error; err != nil {
+		t.Fatalf("create secret manager role: %v", err)
+	}
+	var managePermission model.Permission
+	if err := database.First(&managePermission, "code = ?", "secrets.manage").Error; err != nil {
+		t.Fatalf("load secrets.manage permission: %v", err)
+	}
+	if err := database.Create(&model.RolePermission{RoleID: role.ID, PermissionID: managePermission.ID}).Error; err != nil {
+		t.Fatalf("assign secrets.manage permission: %v", err)
+	}
+	var user model.User
+	if err := database.First(&user, "username = ?", "secretmgr").Error; err != nil {
+		t.Fatalf("load secret manager user: %v", err)
+	}
+	if err := database.Model(&user).Association("Roles").Replace(&role); err != nil {
+		t.Fatalf("assign role: %v", err)
+	}
+
+	login := performRequest(router, http.MethodPost, "/api/auth/login", []byte(`{"username":"secretmgr","password":"plain123456"}`), "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("secretmgr login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
+	}
+	var loginPayload struct {
+		Data struct {
+			Tokens struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(login.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatalf("decode secretmgr login: %v", err)
+	}
+	limitedToken := loginPayload.Data.Tokens.AccessToken
+
+	rename := performRequest(router, http.MethodPatch, "/api/secrets/"+secretID, []byte(`{"name":"Rotate Secret Renamed"}`), limitedToken)
+	if rename.Code != http.StatusOK {
+		t.Fatalf("PATCH /api/secrets/:id rename status = %d, want %d; body=%s", rename.Code, http.StatusOK, rename.Body.String())
+	}
+	patchRotate := performRequest(router, http.MethodPatch, "/api/secrets/"+secretID, []byte(`{"value":"new-token"}`), limitedToken)
+	if patchRotate.Code != http.StatusForbidden {
+		t.Fatalf("PATCH /api/secrets/:id value limited status = %d, want %d; body=%s", patchRotate.Code, http.StatusForbidden, patchRotate.Body.String())
+	}
+	rotateLimited := performRequest(router, http.MethodPost, "/api/secrets/"+secretID+"/rotate", []byte(`{"value":"new-token"}`), limitedToken)
+	if rotateLimited.Code != http.StatusForbidden {
+		t.Fatalf("POST /api/secrets/:id/rotate limited status = %d, want %d; body=%s", rotateLimited.Code, http.StatusForbidden, rotateLimited.Body.String())
+	}
+	rotateAdmin := performRequest(router, http.MethodPost, "/api/secrets/"+secretID+"/rotate", []byte(`{"value":"new-token"}`), adminToken)
+	if rotateAdmin.Code != http.StatusOK {
+		t.Fatalf("POST /api/secrets/:id/rotate admin status = %d, want %d; body=%s", rotateAdmin.Code, http.StatusOK, rotateAdmin.Body.String())
+	}
+	var secretItem model.Secret
+	if err := database.First(&secretItem, "id = ?", secretID).Error; err != nil {
+		t.Fatalf("load rotated secret: %v", err)
+	}
+	if secretItem.KeyVersion != 2 || secretItem.LastRotatedAt == nil {
+		t.Fatalf("secret rotation metadata = keyVersion:%d lastRotatedAt:%v, want v2 with timestamp", secretItem.KeyVersion, secretItem.LastRotatedAt)
+	}
+}
+
 func TestHighRiskRoutesRequireDedicatedPermissions(t *testing.T) {
 	t.Parallel()
 

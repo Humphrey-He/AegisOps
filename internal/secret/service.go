@@ -46,6 +46,11 @@ type UpdateRequest struct {
 	OperatorID  string              `json:"-"`
 }
 
+type RotateRequest struct {
+	Value      string `json:"value" binding:"required"`
+	OperatorID string `json:"-"`
+}
+
 type UseContext struct {
 	ResourceType string
 	ResourceID   string
@@ -175,6 +180,14 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 	item.ExpiresAt = req.ExpiresAt
 	item.UpdatedBy = req.OperatorID
 	return item, s.db.WithContext(ctx).Save(item).Error
+}
+
+func (s *Service) Rotate(ctx context.Context, id string, req RotateRequest) (*model.Secret, error) {
+	value := req.Value
+	return s.Update(ctx, id, UpdateRequest{
+		Value:      &value,
+		OperatorID: req.OperatorID,
+	})
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
