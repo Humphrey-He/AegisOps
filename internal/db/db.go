@@ -8,6 +8,7 @@ import (
 
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
@@ -40,6 +41,22 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		sqlDB.SetMaxIdleConns(1)
 		sqlDB.SetConnMaxIdleTime(0)
 		sqlDB.SetConnMaxLifetime(0)
+
+		return database, nil
+	}
+
+	if cfg.Driver == "postgres" || cfg.Driver == "postgresql" {
+		database, err := gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{})
+		if err != nil {
+			return nil, err
+		}
+
+		sqlDB, err := database.DB()
+		if err != nil {
+			return nil, err
+		}
+		sqlDB.SetMaxOpenConns(20)
+		sqlDB.SetMaxIdleConns(5)
 
 		return database, nil
 	}

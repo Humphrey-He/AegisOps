@@ -277,7 +277,7 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*model.B
 		files[name] = data
 	}
 	files["config-snapshot.json"], _ = redact.JSON(s.configSnapshot(ctx, masked), false)
-	files["restore-guide.md"] = []byte(restoreGuide())
+	files["restore-guide.md"] = []byte(s.restoreGuide())
 	files["manifest.json"], _ = redact.JSON(manifestValue, false)
 	if err := writeZip(path, files); err != nil {
 		return s.failBackup(ctx, record, err)
@@ -690,12 +690,19 @@ func taskLogsText(taskValue any) string {
 	return strings.Join(lines, "\n")
 }
 
-func restoreGuide() string {
+func (s *Service) restoreGuide() string {
+	if sqlitePath(s.dbDSN) == "" {
+		return "# AegisOps 恢复说明\n\n1. 停止 AegisOps 后端服务。\n2. 对当前 PostgreSQL 实例执行逻辑备份或快照备份。\n3. 使用备份包中的配置快照、资源记录和事件记录辅助恢复。\n4. 恢复数据库后启动后端服务并检查 `/healthz`。\n\n当前备份包主要提供配置与排障上下文，不直接导出 PostgreSQL 全量数据文件。\n"
+	}
 	return "# AegisOps 恢复说明\n\n1. 停止 AegisOps 后端服务。\n2. 备份当前数据库文件。\n3. 将备份包中的 `backup.db` 放回 SQLite 数据库路径。\n4. 启动后端服务并检查 `/healthz`。\n\n本期提供备份包和恢复预案，不执行自动恢复。\n"
 }
 
 func sqlitePath(dsn string) string {
 	if strings.HasPrefix(dsn, "file:") {
+		return ""
+	}
+	lowerDSN := strings.ToLower(strings.TrimSpace(dsn))
+	if strings.HasPrefix(lowerDSN, "postgres://") || strings.HasPrefix(lowerDSN, "postgresql://") {
 		return ""
 	}
 	if idx := strings.IndexRune(dsn, '?'); idx >= 0 {
