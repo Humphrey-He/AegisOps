@@ -40,7 +40,7 @@ export function LoginPage() {
               登录 AegisOps
             </Typography.Title>
             <Typography.Text type="secondary">
-              这版前端已经按一期 MVP 收束成可登录、可追踪、可执行运维动作的控制台。
+              登录后进入运维控制台，查看资产、服务、任务与审计记录。
             </Typography.Text>
           </Space>
 
@@ -62,7 +62,7 @@ export function LoginPage() {
           </Form>
 
           <Typography.Text type="secondary">
-            默认演示账号会在管理员初始化完成后可用。
+            如尚未初始化系统管理员，请先完成系统初始化。
           </Typography.Text>
         </Space>
       </Card>

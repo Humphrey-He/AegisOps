@@ -3,6 +3,7 @@ import {
   App as AntApp,
   Button,
   Card,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -25,19 +26,22 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { TaskStatus } from "../../components/TaskStatus";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
-import { auditsApi, dockerApi, registriesApi, servicesApi, tasksApi } from "../../lib/api";
+import { alertsApi, auditsApi, dockerApi, registriesApi, servicesApi, tasksApi } from "../../lib/api";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
 import { queryKeys } from "../../lib/queryKeys";
 import { auditMatchesResource, buildAuditsPath, buildTasksPath, taskMatchesResource } from "../../lib/resourceNavigation";
 import type {
+  AlertEvent,
   DockerNode,
   Registry,
   ServiceDefinition,
   ServiceDefinitionInput,
   ServiceEnvVar,
+  ServiceHealthCheck,
   ServiceMount,
   ServicePort,
+  ServiceReleaseRecord,
   ServiceReleaseInput,
   ServiceVersion,
 } from "../../types/models";
@@ -90,6 +94,44 @@ const releaseActionLabelMap = {
   ROLLBACK: "回滚",
 } as const;
 
+const healthStrategyLabelMap: Record<ServiceHealthCheck["strategyType"], string> = {
+  HTTP: "HTTP",
+  TCP: "TCP",
+  COMMAND: "命令",
+};
+
+const serviceHealthStatusMetaMap: Record<
+  ServiceHealthCheck["status"],
+  { color: string; label: string }
+> = {
+  PENDING: { color: "default", label: "待执行" },
+  RUNNING: { color: "blue", label: "执行中" },
+  SUCCESS: { color: "green", label: "通过" },
+  FAILED: { color: "red", label: "失败" },
+};
+
+const notificationStatusMetaMap = {
+  PENDING: { color: "gold", label: "待发送" },
+  SUCCESS: { color: "green", label: "已发送" },
+  FAILED: { color: "red", label: "发送失败" },
+} as const;
+
+const alertEventLabelMap: Record<AlertEvent["eventType"], string> = {
+  service_release_failed: "服务发布失败",
+  service_health_check_failed: "健康检查失败",
+  nginx_reload_failed: "Nginx 重载失败",
+  nginx_publish_failed: "Nginx 配置发布失败",
+  host_offline: "主机离线",
+  host_recovered: "主机恢复",
+};
+
+const alertSeverityMetaMap: Record<AlertEvent["severity"], { color: string; label: string }> = {
+  INFO: { color: "default", label: "信息" },
+  WARN: { color: "gold", label: "警告" },
+  WARNING: { color: "gold", label: "警告" },
+  CRITICAL: { color: "red", label: "严重" },
+};
+
 function buildServiceFormValues(service?: ServiceDefinition | null): ServiceFormValues {
   return {
     name: service?.name ?? "",
@@ -128,6 +170,72 @@ function versionsForRollbackOptions(versions: ServiceVersion[]) {
 
 function normalizeValue(value?: string) {
   return value?.trim() ?? "";
+}
+
+function truncateMiddle(value?: string, head = 14, tail = 8) {
+  const text = normalizeValue(value);
+  if (!text) {
+    return "--";
+  }
+  if (text.length <= head + tail + 3) {
+    return text;
+  }
+  return `${text.slice(0, head)}...${text.slice(-tail)}`;
+}
+
+function truncateText(value?: string, maxLength = 88) {
+  const text = normalizeValue(value);
+  if (!text) {
+    return "--";
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}...`;
+}
+
+function getReleaseTargetSummary(record: ServiceReleaseRecord) {
+  if (record.fromVersion && record.targetVersion && record.fromVersion !== record.targetVersion) {
+    return `${record.fromVersion} -> ${record.targetVersion}`;
+  }
+  return record.targetVersion || record.fromVersion || "--";
+}
+
+function getReleaseOutcomeSummary(record: ServiceReleaseRecord) {
+  if (normalizeValue(record.failureSummary)) {
+    return record.failureSummary;
+  }
+  if (normalizeValue(record.message)) {
+    return record.message;
+  }
+  if (record.rollbackSuggested && record.suggestedRollbackVersion) {
+    return `建议回滚到 ${record.suggestedRollbackVersion}`;
+  }
+  return "--";
+}
+
+function getHealthCheckSummary(record: ServiceHealthCheck) {
+  if (normalizeValue(record.errorMessage)) {
+    return record.errorMessage;
+  }
+  if (normalizeValue(record.output)) {
+    return record.output;
+  }
+  const details = [];
+  if (record.httpStatus) {
+    details.push(`HTTP ${record.httpStatus}`);
+  }
+  if (record.latencyMs) {
+    details.push(`${record.latencyMs} ms`);
+  }
+  return details.length ? details.join(" · ") : "--";
+}
+
+function getAlertSummary(event: AlertEvent) {
+  if (normalizeValue(event.detail)) {
+    return event.detail;
+  }
+  return event.summary || "--";
 }
 
 function mergeValidationIssues(issues: ValidationIssue[]) {
@@ -368,6 +476,21 @@ export function ServicesPage() {
     queryFn: () => servicesApi.versions(selectedServiceId),
     enabled: Boolean(selectedServiceId),
   });
+  const serviceHealthChecksQuery = useQuery({
+    queryKey: queryKeys.serviceHealthChecks(selectedServiceId),
+    queryFn: () => servicesApi.healthChecks(selectedServiceId),
+    enabled: Boolean(selectedServiceId),
+  });
+  const rollbackSuggestionQuery = useQuery({
+    queryKey: queryKeys.serviceRollbackSuggestion(selectedServiceId),
+    queryFn: () => servicesApi.rollbackSuggestion(selectedServiceId),
+    enabled: Boolean(selectedServiceId),
+  });
+  const alertEventsQuery = useQuery({
+    queryKey: [...queryKeys.alertEvents, "service", selectedServiceId],
+    queryFn: () => alertsApi.listEvents(),
+    enabled: Boolean(selectedServiceId),
+  });
 
   const selectedService =
     serviceDetailQuery.data ?? (servicesQuery.data ?? []).find((item) => item.id === selectedServiceId) ?? null;
@@ -407,6 +530,18 @@ export function ServicesPage() {
   }, [auditsQuery.data, selectedService]);
 
   const relatedAudits = useMemo(() => serviceAudits.slice(0, 6), [serviceAudits]);
+  const serviceHealthChecks = serviceHealthChecksQuery.data ?? [];
+  const latestHealthCheck = serviceHealthChecks[0] ?? null;
+
+  const serviceAlertEvents = useMemo(() => {
+    if (!selectedService) {
+      return [];
+    }
+    return (alertEventsQuery.data ?? []).filter(
+      (event) => event.resourceType === "service" && event.resourceId === selectedService.id,
+    );
+  }, [alertEventsQuery.data, selectedService]);
+  const latestServiceAlert = serviceAlertEvents[0] ?? null;
 
   const registryOptions = useMemo(
     () =>
@@ -564,6 +699,8 @@ export function ServicesPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.serviceInstances(selectedService.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.serviceReleases(selectedService.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.serviceVersions(selectedService.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.serviceHealthChecks(selectedService.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.serviceRollbackSuggestion(selectedService.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
         queryClient.invalidateQueries({ queryKey: queryKeys.audits }),
       ]);
@@ -591,7 +728,7 @@ export function ServicesPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
           title="服务定义"
-          description="二期把镜像、目标节点和运行配置收敛到统一工作台，支持定义服务、追踪版本与实例，再串上发布动作。"
+          description="统一管理服务定义、版本、实例与发布记录。"
           extra={
             <PermissionGuard permission="services.manage">
               <Button
@@ -629,7 +766,7 @@ export function ServicesPage() {
           </div>
         </Card>
 
-        <div className="resource-workbench">
+        <div className="resource-workbench service-workbench">
           <div className="resource-list-pane">
             <Card className="page-card">
               <DataTable
@@ -651,7 +788,7 @@ export function ServicesPage() {
                   emptyText: (
                     <EmptyState
                       title="还没有服务定义"
-                      description="先把镜像来源、目标节点和运行参数固化下来，后续发布和回滚才有稳定入口。"
+                      description="配置镜像来源、目标节点和运行参数后，即可创建服务并发起发布。"
                       action={
                         <Button
                           type="primary"
@@ -732,6 +869,26 @@ export function ServicesPage() {
                         value: selectedService.currentVersion || "--",
                       },
                       {
+                        label: "最近健康检查",
+                        value: latestHealthCheck ? <StatusBadge status={latestHealthCheck.status} /> : "--",
+                      },
+                      {
+                        label: "最近通知状态",
+                        value: latestServiceAlert?.notificationStatus ? (
+                          <StatusBadge status={latestServiceAlert.notificationStatus} />
+                        ) : (
+                          "--"
+                        ),
+                      },
+                      {
+                        label: "回滚建议",
+                        value: rollbackSuggestionQuery.data?.available
+                          ? rollbackSuggestionQuery.data.suggestedVersion ||
+                            rollbackSuggestionQuery.data.suggestedImageTag ||
+                            "可回滚"
+                          : rollbackSuggestionQuery.data?.reason || "--",
+                      },
+                      {
                         label: "标签",
                         value: selectedService.tags.length ? (
                           <Space wrap>
@@ -770,7 +927,7 @@ export function ServicesPage() {
                         首次发布
                       </Button>
                     </PermissionGuard>
-                    <PermissionGuard permission="services.release">
+                    <PermissionGuard permission="services.rollback">
                       <Button
                         disabled={Boolean(activeReleaseTask)}
                         onClick={() => {
@@ -928,90 +1085,226 @@ export function ServicesPage() {
                       : `${serviceVersionsQuery.data?.length ?? 0} 个版本 · ${serviceReleasesQuery.data?.length ?? 0} 条发布记录`}
                   </Typography.Text>
                 </div>
-                <div className="two-col-grid" style={{ marginTop: 12 }}>
+                <div className="service-detail-stack">
                   <div className="resource-subpanel">
-                    <Typography.Text strong>版本列表</Typography.Text>
-                    <DataTable
-                      rowKey="id"
-                      pagination={false}
-                      loading={serviceVersionsQuery.isLoading}
-                      dataSource={serviceVersionsQuery.data}
-                      locale={{ emptyText: "还没有版本记录" }}
-                      columns={[
-                        { title: "版本", dataIndex: "version" },
-                        { title: "Tag", dataIndex: "imageTag" },
-                        {
-                          title: "Digest",
-                          dataIndex: "imageDigest",
-                          render: (value: string) =>
-                            value ? <Typography.Text code>{value.slice(0, 18)}...</Typography.Text> : "--",
-                        },
-                        {
-                          title: "创建时间",
-                          dataIndex: "createdAt",
-                          render: (value: string) => formatDateTime(value),
-                        },
-                        {
-                          title: "任务",
-                          key: "task",
-                          render: (_, version) => {
-                            const taskId = versionReleaseTaskMap.get(version.id);
-                            return taskId ? (
-                              <Button size="small" type="link" onClick={() => navigate(`/tasks/${taskId}`)}>
-                                任务详情
-                              </Button>
-                            ) : (
-                              "--"
-                            );
-                          },
-                        },
-                      ]}
-                    />
+                    <div className="service-detail-panel-header">
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text strong>版本列表</Typography.Text>
+                        <Typography.Text type="secondary">
+                          以版本号、镜像 Tag 和构建指纹为主，保留最近一次关联任务入口。
+                        </Typography.Text>
+                      </Space>
+                    </div>
+                    {serviceVersionsQuery.isLoading ? (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在加载版本记录..." />
+                      </div>
+                    ) : (serviceVersionsQuery.data?.length ?? 0) > 0 ? (
+                      <div className="service-signal-list">
+                        {(serviceVersionsQuery.data ?? []).map((version) => {
+                          const taskId = versionReleaseTaskMap.get(version.id);
+                          return (
+                            <div key={version.id} className="service-signal-item">
+                              <div className="service-signal-main">
+                                <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                  <Space wrap size={[8, 8]}>
+                                    <Typography.Text strong>{version.version}</Typography.Text>
+                                    <Tag color="blue">{version.imageTag || "--"}</Tag>
+                                  </Space>
+                                  <Typography.Text type="secondary">
+                                    镜像指纹 {version.imageDigest ? truncateMiddle(version.imageDigest, 16, 8) : "--"}
+                                  </Typography.Text>
+                                  <div className="resource-activity-meta">{formatDateTime(version.createdAt)}</div>
+                                </Space>
+                              </div>
+                              <div className="service-signal-actions">
+                                {taskId ? (
+                                  <Button size="small" type="link" onClick={() => navigate(`/tasks/${taskId}`)}>
+                                    任务详情
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有版本记录" />
+                      </div>
+                    )}
                   </div>
 
                   <div className="resource-subpanel">
-                    <Typography.Text strong>发布记录</Typography.Text>
-                    <DataTable
-                      rowKey="id"
-                      pagination={false}
-                      loading={serviceReleasesQuery.isLoading}
-                      dataSource={serviceReleasesQuery.data}
-                      locale={{ emptyText: "还没有发布记录" }}
-                      columns={[
-                        {
-                          title: "动作",
-                          dataIndex: "action",
-                          render: (value: keyof typeof releaseActionLabelMap) => releaseActionLabelMap[value],
-                        },
-                        {
-                          title: "目标版本",
-                          dataIndex: "targetVersion",
-                          render: (value: string) => value || "--",
-                        },
-                        {
-                          title: "状态",
-                          dataIndex: "status",
-                          render: (value: string) => <StatusBadge status={value} />,
-                        },
-                        {
-                          title: "时间",
-                          dataIndex: "createdAt",
-                          render: (value: string) => formatDateTime(value),
-                        },
-                        {
-                          title: "任务",
-                          key: "task",
-                          render: (_, record) =>
-                            record.taskId ? (
-                              <Button size="small" type="link" onClick={() => navigate(`/tasks/${record.taskId}`)}>
-                                任务详情
-                              </Button>
-                            ) : (
-                              "--"
-                            ),
-                        },
-                      ]}
-                    />
+                    <div className="service-detail-panel-header">
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text strong>发布流水</Typography.Text>
+                        <Typography.Text type="secondary">
+                          将动作、目标版本、回滚建议和失败原因收口在同一行，方便定位最近一次变更。
+                        </Typography.Text>
+                      </Space>
+                    </div>
+                    {serviceReleasesQuery.isLoading ? (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在加载发布记录..." />
+                      </div>
+                    ) : (serviceReleasesQuery.data?.length ?? 0) > 0 ? (
+                      <div className="service-signal-list">
+                        {(serviceReleasesQuery.data ?? []).map((record) => (
+                          <div key={record.id} className="service-signal-item">
+                            <div className="service-signal-main">
+                              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                <Typography.Text strong>
+                                  {releaseActionLabelMap[record.action]} · {getReleaseTargetSummary(record)}
+                                </Typography.Text>
+                                <Space wrap size={[8, 8]}>
+                                  <StatusBadge status={record.status} />
+                                  {record.healthCheckStatus ? <StatusBadge status={record.healthCheckStatus} /> : null}
+                                  {record.notificationStatus ? <StatusBadge status={record.notificationStatus} /> : null}
+                                </Space>
+                                <Typography.Text type="secondary">
+                                  {truncateText(getReleaseOutcomeSummary(record), 112)}
+                                </Typography.Text>
+                                <div className="resource-activity-meta">
+                                  {record.createdBy ? `${record.createdBy} · ` : ""}
+                                  {formatDateTime(record.createdAt)}
+                                  {record.suggestedRollbackVersion ? ` · 回滚建议 ${record.suggestedRollbackVersion}` : ""}
+                                </div>
+                              </Space>
+                            </div>
+                            <div className="service-signal-actions">
+                              {record.taskId ? (
+                                <Button size="small" type="link" onClick={() => navigate(`/tasks/${record.taskId}`)}>
+                                  任务详情
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有发布记录" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="resource-detail-section">
+                <div className="page-toolbar">
+                  <Typography.Text strong>健康检查与异常闭环</Typography.Text>
+                  <Typography.Text type="secondary">
+                    {serviceHealthChecksQuery.isLoading
+                      ? "正在同步探活结果..."
+                      : `${serviceHealthChecks.length} 条健康检查 · ${serviceAlertEvents.length} 条相关告警`}
+                  </Typography.Text>
+                </div>
+                <div className="service-detail-band-grid">
+                  <div className="resource-subpanel">
+                    <div className="service-detail-panel-header">
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text strong>最近健康检查</Typography.Text>
+                        <Typography.Text type="secondary">先看探活策略、目标和结果摘要，再判断是否需要进入告警闭环。</Typography.Text>
+                      </Space>
+                    </div>
+                    {serviceHealthChecksQuery.isLoading ? (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在加载健康检查记录..." />
+                      </div>
+                    ) : serviceHealthChecks.length ? (
+                      <div className="service-signal-list">
+                        {serviceHealthChecks.slice(0, 5).map((record) => (
+                          <div key={record.id} className="service-signal-item">
+                            <div className="service-signal-main">
+                              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                <Space wrap size={[8, 8]}>
+                                  <Tag color={serviceHealthStatusMetaMap[record.status].color}>
+                                    {healthStrategyLabelMap[record.strategyType]}
+                                  </Tag>
+                                  <StatusBadge status={record.status} />
+                                </Space>
+                                <Typography.Text strong>{record.target}</Typography.Text>
+                                <Typography.Text type="secondary">
+                                  {truncateText(getHealthCheckSummary(record), 112)}
+                                </Typography.Text>
+                                <div className="resource-activity-meta">
+                                  {formatDateTime(record.startedAt)}
+                                  {record.finishedAt ? ` · 结束于 ${formatDateTime(record.finishedAt)}` : " · 执行中"}
+                                </div>
+                              </Space>
+                            </div>
+                            <div className="service-signal-actions">
+                              {record.taskId ? (
+                                <Button size="small" type="link" onClick={() => navigate(`/tasks/${record.taskId}`)}>
+                                  任务详情
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前服务还没有健康检查记录" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="resource-subpanel">
+                    <div className="service-detail-panel-header">
+                      <Space direction="vertical" size={2}>
+                        <Typography.Text strong>最近相关告警</Typography.Text>
+                        <Typography.Text type="secondary">把事件等级、处理状态和通知结果放在一张工作带里，便于追踪是否真正闭环。</Typography.Text>
+                      </Space>
+                    </div>
+                    {alertEventsQuery.isLoading ? (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在加载相关告警..." />
+                      </div>
+                    ) : serviceAlertEvents.length ? (
+                      <div className="service-signal-list">
+                        {serviceAlertEvents.slice(0, 5).map((event) => {
+                          const severityMeta = alertSeverityMetaMap[event.severity];
+                          const notificationMeta = event.notificationStatus
+                            ? notificationStatusMetaMap[event.notificationStatus]
+                            : null;
+                          return (
+                            <div key={event.id} className="service-signal-item">
+                              <div className="service-signal-main">
+                                <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                                  <Space wrap size={[8, 8]}>
+                                    <Typography.Text strong>{alertEventLabelMap[event.eventType] ?? event.eventType}</Typography.Text>
+                                    <Tag color={severityMeta.color}>{severityMeta.label}</Tag>
+                                    <StatusBadge status={event.status} />
+                                    {notificationMeta ? <Tag color={notificationMeta.color}>{notificationMeta.label}</Tag> : null}
+                                  </Space>
+                                  <Typography.Text type="secondary">{truncateText(event.summary, 108)}</Typography.Text>
+                                  <div className="resource-activity-meta">
+                                    {formatDateTime(event.lastTriggeredAt)}
+                                    {event.suggestedRollbackVersion ? ` · 回滚建议 ${event.suggestedRollbackVersion}` : ""}
+                                  </div>
+                                  {normalizeValue(getAlertSummary(event)) !== normalizeValue(event.summary) ? (
+                                    <Typography.Text type="secondary">{truncateText(getAlertSummary(event), 132)}</Typography.Text>
+                                  ) : null}
+                                </Space>
+                              </div>
+                              <div className="service-signal-actions">
+                                {event.taskId ? (
+                                  <Button size="small" type="link" onClick={() => navigate(`/tasks/${event.taskId}`)}>
+                                    任务详情
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="resource-activity-empty">
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前服务还没有相关告警" />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1319,8 +1612,8 @@ export function ServicesPage() {
             <Alert
               type="info"
               showIcon
-              message="当前发布链路先完成版本、实例和任务记录"
-              description="真实 Docker 执行仍以后端联调进度为准，这一轮会先把前端工作台与真实 API 契约打通。"
+              message="提交后将在任务中心跟踪发布进度"
+              description="确认版本、镜像与目标节点后发起发布、升级或回滚，并在记录中查看结果。"
             />
             {activeReleaseTask ? (
               <Alert
@@ -1400,7 +1693,7 @@ export function ServicesPage() {
         <DangerConfirm
           open={Boolean(deleteTarget)}
           title="删除服务定义"
-          description={`删除后将移除 ${deleteTarget?.name ?? ""} 的服务定义记录。如果它已经生成实例，后端会阻止本次删除。`}
+          description={`删除后将移除 ${deleteTarget?.name ?? ""} 的服务定义记录。若仍存在关联实例或发布引用，删除请求可能被拒绝。`}
           confirmText={deleteTarget?.code}
           loading={deleteMutation.isPending}
           onCancel={() => setDeleteTarget(null)}

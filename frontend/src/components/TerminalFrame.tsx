@@ -58,7 +58,7 @@ export function TerminalFrame({
     terminal.loadAddon(fitAddon);
     terminal.open(terminalRef.current);
     fitAddon.fit();
-    terminal.writeln("AegisOps WebSSH session");
+    terminal.writeln("AegisOps Secure Shell Session");
     terminal.writeln("----------------------------------------");
     lines.forEach((line) => terminal.writeln(line));
     terminal.writeln("");
@@ -73,8 +73,8 @@ export function TerminalFrame({
       terminal.write(String(event.data));
     };
     socket.onerror = () => {
-      setLastError("WebSocket 建连失败，请检查会话状态或稍后重试。");
-      terminal.writeln("\r\nWebSSH connection failed.");
+      setLastError("终端连接失败，请检查会话状态或稍后重试。");
+      terminal.writeln("\r\nTerminal connection failed.");
     };
     socket.onclose = () => {
       setSocketStatus("DISCONNECTED");
@@ -112,7 +112,7 @@ export function TerminalFrame({
             <Typography.Title level={4} style={{ margin: 0 }}>
               {title}
             </Typography.Title>
-            <Typography.Text type="secondary">WebSSH over WebSocket</Typography.Text>
+            <Typography.Text type="secondary">安全终端会话</Typography.Text>
           </Space>
           <Space>
             {allowReconnect ? (

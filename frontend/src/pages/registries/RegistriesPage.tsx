@@ -27,6 +27,7 @@ import { ResourceActivityList } from "../../components/resource/ResourceActivity
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatDateTime } from "../../lib/format";
+import { auditMatchesResource, buildAuditsPath } from "../../lib/resourceNavigation";
 import type { Registry, RegistryInput, Secret } from "../../types/models";
 
 type RegistryFormValues = {
@@ -110,7 +111,7 @@ export function RegistriesPage() {
   });
   const auditsQuery = useQuery({
     queryKey: queryKeys.audits,
-    queryFn: auditsApi.list,
+    queryFn: () => auditsApi.list(),
   });
   const registryDetailQuery = useQuery({
     queryKey: queryKeys.registry(selectedRegistryId),
@@ -210,12 +211,15 @@ export function RegistriesPage() {
 
   const testMutation = useMutation({
     mutationFn: registriesApi.test,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["registries"] }),
         selectedRegistryId ? queryClient.invalidateQueries({ queryKey: queryKeys.registry(selectedRegistryId) }) : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.audits }),
       ]);
+      if (result.taskId) {
+        navigate(`/tasks/${result.taskId}`);
+      }
       setPanelError(null);
       setLatestActionText("已完成一次 Registry 连通性检测。");
       await message.success("Registry 连接测试成功");
@@ -279,10 +283,9 @@ export function RegistriesPage() {
       return [];
     }
     return (auditsQuery.data ?? [])
-      .filter((audit) => {
-        const haystack = `${audit.resourceType} ${audit.resourceName} ${audit.summary}`.toLowerCase();
-        return haystack.includes(selectedRegistry.id.toLowerCase()) || haystack.includes(selectedRegistry.name.toLowerCase());
-      })
+      .filter((audit) =>
+        auditMatchesResource(audit, "registry", selectedRegistry.id, [selectedRegistry.name, selectedRegistry.url]),
+      )
       .slice(0, 6);
   }, [auditsQuery.data, selectedRegistry]);
 
@@ -307,7 +310,7 @@ export function RegistriesPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
           title="Registry"
-          description="二期先把镜像来源管理做实：仓库接入、连通性测试、仓库目录与 Tag 浏览都在同一工作台完成。"
+          description="统一管理镜像仓库接入、连接检测、仓库目录与 Tag 浏览。"
           extra={
             <PermissionGuard permission="registries.manage">
               <Button
@@ -366,7 +369,7 @@ export function RegistriesPage() {
                   emptyText: (
                     <EmptyState
                       title="还没有接入任何 Registry"
-                      description="先把镜像仓库接进来，后续服务定义和发布流程才能选择镜像版本。"
+                      description="接入镜像仓库后，可为服务选择镜像版本并查看镜像摘要。"
                       action={
                         <Button type="primary" onClick={() => setDrawerOpen(true)}>
                           创建第一个 Registry
@@ -447,7 +450,7 @@ export function RegistriesPage() {
               actions={
                 selectedRegistry ? (
                   <Space wrap>
-                    <PermissionGuard permission="registries.manage">
+                    <PermissionGuard permission="registries.test">
                       <Button
                         type={selectedRegistry.status !== "ONLINE" ? "primary" : "default"}
                         loading={testMutation.isPending}
@@ -632,7 +635,17 @@ export function RegistriesPage() {
               <ResourceActivityList
                 title="最近审计"
                 actionLabel={selectedRegistry ? "查看全部审计" : undefined}
-                onActionClick={selectedRegistry ? () => navigate("/audits") : undefined}
+                onActionClick={
+                  selectedRegistry
+                    ? () =>
+                        navigate(
+                          buildAuditsPath({
+                            resourceType: "registry",
+                            resourceId: selectedRegistry.id,
+                          }),
+                        )
+                    : undefined
+                }
                 items={relatedAudits.map((audit) => ({
                   key: audit.id,
                   title: audit.action,
@@ -733,7 +746,7 @@ export function RegistriesPage() {
         <DangerConfirm
           open={Boolean(deleteTarget)}
           title="删除 Registry"
-          description={`删除后将移除 ${deleteTarget?.name ?? ""} 的仓库浏览入口。若后续服务定义已引用该 Registry，后端联调阶段还需要补引用检查。`}
+          description={`删除后将移除 ${deleteTarget?.name ?? ""} 的仓库浏览入口。若仍有服务引用该 Registry，删除请求可能被拒绝。`}
           confirmText={deleteTarget?.name}
           loading={deleteMutation.isPending}
           onCancel={() => setDeleteTarget(null)}

@@ -237,7 +237,7 @@ export function DockerNodeDetailPage() {
                     >
                       查看日志
                     </Button>
-                    <PermissionGuard permission="docker.manage">
+                    <PermissionGuard permission="docker.operate">
                       <Button
                         size="small"
                         loading={
@@ -251,7 +251,7 @@ export function DockerNodeDetailPage() {
                         启动
                       </Button>
                     </PermissionGuard>
-                    <PermissionGuard permission="docker.manage">
+                    <PermissionGuard permission="docker.operate">
                       <Button
                         size="small"
                         loading={
@@ -265,7 +265,7 @@ export function DockerNodeDetailPage() {
                         停止
                       </Button>
                     </PermissionGuard>
-                    <PermissionGuard permission="docker.manage">
+                    <PermissionGuard permission="docker.operate">
                       <Button
                         size="small"
                         type="primary"

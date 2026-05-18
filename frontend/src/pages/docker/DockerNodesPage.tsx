@@ -23,6 +23,7 @@ import { ResourceActivityList } from "../../components/resource/ResourceActivity
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatDateTime } from "../../lib/format";
+import { auditMatchesResource, buildAuditsPath, buildTasksPath, taskMatchesResource } from "../../lib/resourceNavigation";
 import { TaskStatus } from "../../components/TaskStatus";
 import type { DockerNode, DockerNodeInput } from "../../types/models";
 
@@ -51,7 +52,7 @@ export function DockerNodesPage() {
   });
   const tasksQuery = useQuery({
     queryKey: queryKeys.tasks,
-    queryFn: tasksApi.list,
+    queryFn: () => tasksApi.list(),
   });
   const dockerTlsSecretsQuery = useQuery({
     queryKey: queryKeys.secrets(""),
@@ -59,7 +60,7 @@ export function DockerNodesPage() {
   });
   const auditsQuery = useQuery({
     queryKey: queryKeys.audits,
-    queryFn: auditsApi.list,
+    queryFn: () => auditsApi.list(),
   });
   const nodeDetailQuery = useQuery({
     queryKey: queryKeys.dockerNode(selectedNodeId),
@@ -74,7 +75,7 @@ export function DockerNodesPage() {
 
   const saveMutation = useMutation({
     mutationFn: dockerApi.saveNode,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.dockerNodes });
       await message.success(editingNode ? "节点已更新" : "节点已创建");
       setDrawerOpen(false);
@@ -89,13 +90,16 @@ export function DockerNodesPage() {
 
   const testMutation = useMutation({
     mutationFn: dockerApi.testNode,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.dockerNodes }),
         selectedNodeId ? queryClient.invalidateQueries({ queryKey: queryKeys.dockerNode(selectedNodeId) }) : Promise.resolve(),
         selectedNodeId ? queryClient.invalidateQueries({ queryKey: queryKeys.containers(selectedNodeId) }) : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
+      if (result.taskId) {
+        navigate(`/tasks/${result.taskId}`);
+      }
       setLatestActionText("已发起一次 Docker 节点连通性检测。");
       await message.success("节点检测已完成");
     },
@@ -109,7 +113,7 @@ export function DockerNodesPage() {
       return [];
     }
     return (tasksQuery.data ?? [])
-      .filter((task) => task.resourceId === selectedNode.id || task.target.includes(selectedNode.id) || task.target.includes(selectedNode.name))
+      .filter((task) => taskMatchesResource(task, "docker-node", selectedNode.id, [selectedNode.name, selectedNode.endpoint]))
       .slice(0, 5);
   }, [selectedNode, tasksQuery.data]);
   const relatedAudits = useMemo(() => {
@@ -117,10 +121,9 @@ export function DockerNodesPage() {
       return [];
     }
     return (auditsQuery.data ?? [])
-      .filter((audit) => {
-        const haystack = `${audit.resourceType} ${audit.resourceName} ${audit.summary}`.toLowerCase();
-        return haystack.includes(selectedNode.id.toLowerCase()) || haystack.includes(selectedNode.name.toLowerCase());
-      })
+      .filter((audit) =>
+        auditMatchesResource(audit, "docker-node", selectedNode.id, [selectedNode.name, selectedNode.endpoint]),
+      )
       .slice(0, 5);
   }, [auditsQuery.data, selectedNode]);
   const primaryAction = selectedNode?.status === "OFFLINE" || selectedNode?.status === "UNKNOWN" ? "test" : "containers";
@@ -131,7 +134,7 @@ export function DockerNodesPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
           title="Docker 节点"
-          description="MVP 先把节点接入、连通性检测和容器列表这三件事做好。"
+          description="统一管理 Docker 节点接入、连接检测与容器视图。"
           extra={
             <PermissionGuard permission="docker.manage">
               <Button
@@ -211,7 +214,7 @@ export function DockerNodesPage() {
               actions={
                 selectedNode ? (
                   <Space wrap>
-                    <PermissionGuard permission="docker.manage">
+                    <PermissionGuard permission="docker.test">
                       <Button
                         type={primaryAction === "test" ? "primary" : "default"}
                         loading={testMutation.isPending}
@@ -259,7 +262,17 @@ export function DockerNodesPage() {
               <ResourceActivityList
                 title="最近任务"
                 actionLabel={selectedNode ? "进入任务中心" : undefined}
-                onActionClick={selectedNode ? () => navigate("/tasks") : undefined}
+                onActionClick={
+                  selectedNode
+                    ? () =>
+                        navigate(
+                          buildTasksPath({
+                            resourceType: "docker-node",
+                            resourceId: selectedNode.id,
+                          }),
+                        )
+                    : undefined
+                }
                 items={relatedTasks.map((task) => ({
                   key: task.id,
                   title: task.type,
@@ -273,7 +286,17 @@ export function DockerNodesPage() {
               <ResourceActivityList
                 title="最近审计"
                 actionLabel={selectedNode ? "查看全部审计" : undefined}
-                onActionClick={selectedNode ? () => navigate("/audits") : undefined}
+                onActionClick={
+                  selectedNode
+                    ? () =>
+                        navigate(
+                          buildAuditsPath({
+                            resourceType: "docker-node",
+                            resourceId: selectedNode.id,
+                          }),
+                        )
+                    : undefined
+                }
                 items={relatedAudits.map((audit) => ({
                   key: audit.id,
                   title: audit.action,

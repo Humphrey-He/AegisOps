@@ -3,14 +3,47 @@ export type HostStatus = "HEALTHY" | "UNREACHABLE" | "UNKNOWN" | "TESTING";
 export type DockerNodeStatus = "ONLINE" | "OFFLINE" | "UNKNOWN" | "TESTING";
 export type RegistryAuthType = "NONE" | "BASIC" | "TOKEN";
 export type RegistryStatus = "ONLINE" | "OFFLINE" | "UNKNOWN";
+export type NginxNodeStatus = "ONLINE" | "OFFLINE" | "UNKNOWN";
+export type NginxConfigStatus = "DRAFT" | "ACTIVE";
 export type ServiceStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 export type ServiceInstanceStatus = "PENDING" | "RUNNING" | "STOPPED" | "FAILED" | "ROLLBACK";
 export type ServiceReleaseAction = "RELEASE" | "UPGRADE" | "ROLLBACK";
+export type ServiceHealthStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+export type NotificationChannelType = "TELEGRAM" | "WECOM" | "EMAIL";
+export type NotificationLanguage = "zh-CN" | "en-US";
+export type NotificationRecordStatus = "PENDING" | "SUCCESS" | "FAILED";
+export type AlertSeverity = "INFO" | "WARN" | "WARNING" | "CRITICAL";
+export type AlertEventStatus = "OPEN" | "ACKED" | "RESOLVED";
+export type AlertEventType =
+  | "service_release_failed"
+  | "service_health_check_failed"
+  | "nginx_reload_failed"
+  | "nginx_publish_failed"
+  | "host_offline"
+  | "host_recovered";
+export type HealthCheckStrategyType = "HTTP" | "TCP" | "COMMAND";
 export type TaskStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELED";
 export type TaskLogLevel = "INFO" | "WARN" | "ERROR";
-export type SecretType = "SSH_PASSWORD" | "SSH_PRIVATE_KEY" | "DOCKER_TLS" | "DOCKER_TOKEN";
+export type SecretType =
+  | "SSH_PASSWORD"
+  | "SSH_PRIVATE_KEY"
+  | "DOCKER_TLS"
+  | "DOCKER_TOKEN"
+  | "WEBHOOK"
+  | "API_TOKEN"
+  | "SMTP";
+export type SecretStatus = "ACTIVE" | "DISABLED";
 export type AuditResult = "SUCCESS" | "FAILED";
 export type TerminalSessionStatus = "CONNECTED" | "DISCONNECTED";
+export type TaskDispatchSource = "MANUAL" | "SYSTEM" | "SCHEDULED";
+export type TaskDispatchStatus =
+  | "PENDING"
+  | "DISPATCHED"
+  | "RUNNING"
+  | "SUCCESS"
+  | "FAILED"
+  | "CANCELED"
+  | "TIMEOUT";
 
 export type PermissionDefinition = {
   key: string;
@@ -45,9 +78,40 @@ export type Secret = {
   type: SecretType;
   username?: string;
   description?: string;
+  purpose?: string;
+  status?: SecretStatus;
   valueMasked: string;
+  keyVersion?: number;
+  lastRotatedAt?: string;
+  expiresAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
   usedBy: string[];
   updatedAt: string;
+};
+
+export type SecretReference = {
+  id: string;
+  secretId: string;
+  resourceType: string;
+  resourceId: string;
+  fieldName: string;
+  createdBy?: string;
+  createdAt: string;
+};
+
+export type SecretReadAudit = {
+  id: string;
+  secretId: string;
+  resourceType?: string;
+  resourceId?: string;
+  action: string;
+  operatorId?: string;
+  taskId?: string;
+  result: AuditResult;
+  errorMessage?: string;
+  createdAt: string;
 };
 
 export type Host = {
@@ -60,6 +124,10 @@ export type Host = {
   tags: string[];
   description?: string;
   lastCheckedAt?: string;
+  lastOfflineAt?: string;
+  lastRecoveredAt?: string;
+  latestAlertStatus?: AlertEventStatus;
+  consecutiveFailureCount?: number;
 };
 
 export type DockerNode = {
@@ -104,6 +172,38 @@ export type RegistryManifestResult = {
   digest: string;
   contentType: string;
   manifest: unknown;
+};
+
+export type NginxNode = {
+  id: string;
+  name: string;
+  hostId: string;
+  hostName?: string;
+  configPath: string;
+  testCommand: string;
+  reloadCommand: string;
+  description?: string;
+  status: NginxNodeStatus;
+  lastTestAt?: string;
+  lastReloadStatus?: TaskStatus;
+  lastReloadAt?: string;
+  lastFailureReason?: string;
+  latestNotificationStatus?: NotificationRecordStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NginxConfigVersion = {
+  id: string;
+  nodeId: string;
+  version: string;
+  content: string;
+  checksum: string;
+  status: NginxConfigStatus;
+  message?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ServicePort = {
@@ -196,6 +296,12 @@ export type ServiceReleaseRecord = {
   targetVersion: string;
   status: TaskStatus;
   message: string;
+  healthCheckStatus?: ServiceHealthStatus;
+  notificationStatus?: NotificationRecordStatus;
+  rollbackSuggested?: boolean;
+  suggestedRollbackVersionId?: string;
+  suggestedRollbackVersion?: string;
+  failureSummary?: string;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
@@ -204,6 +310,140 @@ export type ServiceReleaseRecord = {
 export type ServiceReleaseResult = {
   taskId: string;
   releaseId: string;
+};
+
+export type ServiceHealthCheck = {
+  id: string;
+  serviceId: string;
+  releaseId: string;
+  taskId?: string;
+  strategyType: HealthCheckStrategyType;
+  target: string;
+  status: ServiceHealthStatus;
+  httpStatus?: number;
+  latencyMs?: number;
+  output?: string;
+  errorMessage?: string;
+  startedAt: string;
+  finishedAt?: string;
+};
+
+export type RollbackSuggestion = {
+  serviceId: string;
+  suggestedVersionId: string;
+  suggestedVersion: string;
+  suggestedImageTag?: string;
+  reason: string;
+  sourceReleaseId?: string;
+  available: boolean;
+};
+
+export type NotificationChannel = {
+  id: string;
+  name: string;
+  type: NotificationChannelType;
+  enabled: boolean;
+  language: NotificationLanguage;
+  target: string;
+  config?: string;
+  publicConfig?: string;
+  configSecretId?: string;
+  lastTestStatus?: NotificationRecordStatus;
+  lastTestAt?: string;
+  lastFailureReason?: string;
+  updatedAt: string;
+};
+
+export type NotificationChannelInput = {
+  id?: string;
+  name: string;
+  type: NotificationChannelType;
+  enabled: boolean;
+  language: NotificationLanguage;
+  target: string;
+  config?: string;
+  publicConfig?: string;
+  configSecretId?: string;
+};
+
+export type NotificationTestResult = {
+  ok: boolean;
+  recordId?: string;
+};
+
+export type NotificationRecord = {
+  id: string;
+  eventId?: string;
+  channelId: string;
+  channelName: string;
+  channelType: NotificationChannelType;
+  status: NotificationRecordStatus;
+  providerMessageId?: string;
+  responseExcerpt?: string;
+  errorMessage?: string;
+  createdAt: string;
+  finishedAt?: string;
+};
+
+export type AlertRule = {
+  id: string;
+  name: string;
+  eventType: AlertEventType;
+  resourceType?: string;
+  resourceScope?: string;
+  language?: NotificationLanguage;
+  channelIds: string[];
+  enabled: boolean;
+  dedupeWindowSeconds: number;
+  requireAck: boolean;
+  suppressDuplicates: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AlertRuleInput = {
+  id?: string;
+  name: string;
+  eventType: AlertEventType;
+  resourceType?: string;
+  resourceScope?: string;
+  language?: NotificationLanguage;
+  channelIds: string[];
+  enabled: boolean;
+  dedupeWindowSeconds: number;
+  requireAck: boolean;
+  suppressDuplicates: boolean;
+};
+
+export type AlertEvent = {
+  id: string;
+  eventType: AlertEventType;
+  resourceType: string;
+  resourceId?: string;
+  resourceName: string;
+  taskId?: string;
+  releaseId?: string;
+  severity: AlertSeverity;
+  status: AlertEventStatus;
+  summary: string;
+  detail?: string;
+  dedupeKey?: string;
+  firstTriggeredAt: string;
+  lastTriggeredAt: string;
+  resolvedAt?: string;
+  suggestedRollbackVersionId?: string;
+  suggestedRollbackVersion?: string;
+  notificationStatus?: NotificationRecordStatus;
+};
+
+export type HostAvailabilityCheck = {
+  id: string;
+  hostId: string;
+  taskId?: string;
+  status: HostStatus;
+  failureReason?: string;
+  startedAt: string;
+  finishedAt?: string;
 };
 
 export type ContainerItem = {
@@ -241,6 +481,13 @@ export type Task = {
   resourceType?: string;
   resourceId?: string;
   initiatedBy: string;
+  dispatchSource?: TaskDispatchSource;
+  dispatchStatus?: TaskDispatchStatus;
+  retryCount?: number;
+  maxRetry?: number;
+  timeoutSeconds?: number;
+  concurrencyKey?: string;
+  queuedAt?: string;
   progress: number;
   summary?: string;
   createdAt: string;
@@ -255,6 +502,7 @@ export type AuditLog = {
   actor: string;
   action: string;
   resourceType: string;
+  resourceId?: string;
   resourceName: string;
   result: AuditResult;
   traceId: string;
@@ -268,6 +516,8 @@ export type DashboardSummary = {
   dockerNodeCount: number;
   containerCount: number;
   unhealthyResourceCount: number;
+  openAlertCount?: number;
+  recentAlertEvents?: AlertEvent[];
   recentTasks: Task[];
   recentAudits: AuditLog[];
 };
@@ -336,7 +586,44 @@ export type SecretInputPayload = {
   type: SecretType;
   username?: string;
   description?: string;
+  purpose?: string;
+  status?: SecretStatus;
+  expiresAt?: string;
   secretValue: string;
+};
+
+export type ScheduledJob = {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  cronExpr: string;
+  targetType: string;
+  targetId: string;
+  payloadJson: string;
+  retryPolicyJson: string;
+  timeoutSeconds: number;
+  concurrencyKey: string;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScheduledJobInput = {
+  id?: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  cronExpr: string;
+  targetType?: string;
+  targetId?: string;
+  payloadJson?: string;
+  retryPolicyJson?: string;
+  timeoutSeconds: number;
+  concurrencyKey?: string;
 };
 
 export type HostInput = {
@@ -365,6 +652,23 @@ export type RegistryInput = {
   authType: RegistryAuthType;
   secretId?: string;
   description?: string;
+};
+
+export type NginxNodeInput = {
+  id?: string;
+  name: string;
+  hostId: string;
+  configPath?: string;
+  testCommand?: string;
+  reloadCommand?: string;
+  description?: string;
+};
+
+export type NginxConfigInput = {
+  version: string;
+  content: string;
+  message?: string;
+  activate?: boolean;
 };
 
 export type ServiceDefinitionInput = {

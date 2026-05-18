@@ -1,9 +1,11 @@
 import {
   AuditOutlined,
   AppstoreOutlined,
+  BellOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DesktopOutlined,
+  SettingOutlined,
   InboxOutlined,
   TeamOutlined,
   UnorderedListOutlined,
@@ -30,28 +32,17 @@ export const navItems: NavItem[] = [
     label: "资产管理",
     icon: <DesktopOutlined />,
     children: [
-      {
-        key: "/assets/hosts",
-        label: "主机",
-        permission: "hosts.view",
-      },
-      {
-        key: "/assets/secrets",
-        label: "凭证",
-        permission: "secrets.view",
-      },
+      { key: "/assets/hosts", label: "主机", permission: "hosts.view" },
+      { key: "/assets/secrets", label: "凭证", permission: "secrets.view" },
     ],
   },
   {
     key: "docker",
-    label: "Docker",
+    label: "运维执行",
     icon: <DatabaseOutlined />,
     children: [
-      {
-        key: "/docker/nodes",
-        label: "节点",
-        permission: "docker.view",
-      },
+      { key: "/docker/nodes", label: "Docker", permission: "docker.view" },
+      { key: "/nginx/nodes", label: "Nginx", permission: "nginx.view" },
     ],
   },
   {
@@ -59,11 +50,7 @@ export const navItems: NavItem[] = [
     label: "交付发布",
     icon: <InboxOutlined />,
     children: [
-      {
-        key: "/delivery/registries",
-        label: "Registry",
-        permission: "registries.view",
-      },
+      { key: "/delivery/registries", label: "Registry", permission: "registries.view" },
       {
         key: "/delivery/services",
         label: "服务定义",
@@ -85,20 +72,28 @@ export const navItems: NavItem[] = [
     permission: "audits.view",
   },
   {
+    key: "alerts",
+    label: "稳定性",
+    icon: <BellOutlined />,
+    children: [{ key: "/alerts/events", label: "告警事件", permission: "alerts.view" }],
+  },
+  {
+    key: "settings",
+    label: "告警配置",
+    icon: <SettingOutlined />,
+    children: [
+      { key: "/settings/notifications", label: "通知通道", permission: "notifications.view" },
+      { key: "/settings/alert-rules", label: "告警规则", permission: "alerts.view" },
+    ],
+  },
+  {
     key: "system",
     label: "系统管理",
     icon: <TeamOutlined />,
     children: [
-      {
-        key: "/system/users",
-        label: "用户",
-        permission: "users.view",
-      },
-      {
-        key: "/system/roles",
-        label: "角色",
-        permission: "roles.view",
-      },
+      { key: "/system/users", label: "用户", permission: "users.view" },
+      { key: "/system/roles", label: "角色", permission: "roles.view" },
+      { key: "/system/scheduled-jobs", label: "调度任务", permission: "scheduler.view" },
     ],
   },
 ];
@@ -109,6 +104,11 @@ export const hiddenNavTitles: Record<string, string> = {
   "/terminal": "终端",
   "/delivery/registries": "Registry",
   "/delivery/services": "服务定义",
+  "/nginx/nodes": "Nginx",
+  "/alerts/events": "告警事件",
+  "/settings/notifications": "通知通道",
+  "/settings/alert-rules": "告警规则",
+  "/system/scheduled-jobs": "调度任务",
   "/403": "无权限",
   "/404": "页面不存在",
 };

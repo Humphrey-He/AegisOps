@@ -41,7 +41,7 @@ export function SetupAdminPage() {
               初始化 AegisOps
             </Typography.Title>
             <Typography.Text type="secondary">
-              一期 MVP 先完成管理员初始化，再进入登录与权限配置闭环。
+              创建系统管理员后，即可登录控制台并继续配置访问权限。
             </Typography.Text>
           </Space>
 

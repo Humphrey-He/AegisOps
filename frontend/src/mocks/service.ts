@@ -2,14 +2,27 @@ import { permissionCatalog } from "../lib/permissions";
 import { ApiError, type FieldErrors } from "../types/api";
 import type {
   AdminSetupInput,
+  AlertEvent,
+  AlertRule,
+  AlertRuleInput,
   AuditLog,
   ContainerItem,
   DashboardSummary,
   DockerNode,
   DockerNodeInput,
   Host,
+  HostAvailabilityCheck,
   HostInput,
   LoginInput,
+  NotificationChannel,
+  NotificationChannelInput,
+  NotificationRecord,
+  NotificationTestResult,
+  NginxConfigInput,
+  NginxConfigVersion,
+  NginxNode,
+  NginxNodeInput,
+  RollbackSuggestion,
   Role,
   RoleInput,
   Registry,
@@ -19,6 +32,7 @@ import type {
   RegistryTagsResult,
   ServiceDefinition,
   ServiceDefinitionInput,
+  ServiceHealthCheck,
   ServiceInstance,
   ServiceReleaseInput,
   ServiceReleaseRecord,
@@ -39,7 +53,7 @@ import type {
 const STORAGE_KEY = "aegisops-mvp-db";
 const RESPONSE_DELAY = 260;
 const TASK_DELAY = 1600;
-const DEMO_DATASET_VERSION = 3;
+const DEMO_DATASET_VERSION = 4;
 const MINUTE_MS = 60 * 1000;
 
 type StoredUser = User & {
@@ -74,7 +88,15 @@ type MockDb = {
   serviceVersions: ServiceVersion[];
   serviceInstances: ServiceInstance[];
   serviceReleases: ServiceReleaseRecord[];
+  serviceHealthChecks: ServiceHealthCheck[];
+  hostAvailabilityChecks: HostAvailabilityCheck[];
+  notificationChannels: NotificationChannel[];
+  notificationRecords: NotificationRecord[];
+  alertRules: AlertRule[];
+  alertEvents: AlertEvent[];
   dockerNodes: DockerNode[];
+  nginxNodes: NginxNode[];
+  nginxConfigs: NginxConfigVersion[];
   containers: ContainerItem[];
   tasks: Task[];
   audits: AuditLog[];
@@ -240,7 +262,15 @@ function createStoredDb(): MockDb {
     serviceVersions: [],
     serviceInstances: [],
     serviceReleases: [],
+    serviceHealthChecks: [],
+    hostAvailabilityChecks: [],
+    notificationChannels: [],
+    notificationRecords: [],
+    alertRules: [],
+    alertEvents: [],
     dockerNodes: [],
+    nginxNodes: [],
+    nginxConfigs: [],
     containers: [],
     tasks: [],
     audits: [],
@@ -264,7 +294,15 @@ function migrateDb(rawDb: Partial<MockDb>): MockDb {
     serviceVersions: rawDb.serviceVersions ?? [],
     serviceInstances: rawDb.serviceInstances ?? [],
     serviceReleases: rawDb.serviceReleases ?? [],
+    serviceHealthChecks: rawDb.serviceHealthChecks ?? [],
+    hostAvailabilityChecks: rawDb.hostAvailabilityChecks ?? [],
+    notificationChannels: rawDb.notificationChannels ?? [],
+    notificationRecords: rawDb.notificationRecords ?? [],
+    alertRules: rawDb.alertRules ?? [],
+    alertEvents: rawDb.alertEvents ?? [],
     dockerNodes: rawDb.dockerNodes ?? [],
+    nginxNodes: rawDb.nginxNodes ?? [],
+    nginxConfigs: rawDb.nginxConfigs ?? [],
     containers: rawDb.containers ?? [],
     tasks: rawDb.tasks ?? [],
     audits: rawDb.audits ?? [],
@@ -332,7 +370,7 @@ function createDefaultRoles(): Role[] {
     {
       id: "role-admin",
       name: "platform-admin",
-      description: "平台管理员，拥有一期 MVP 全量权限。",
+      description: "平台管理员，拥有完整控制台权限。",
       permissions: permissionCatalog.map((item) => item.key),
       builtIn: true,
       createdAt,
@@ -526,7 +564,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     name: "prod-root-ssh",
     type: "SSH_PRIVATE_KEY",
     username: "root",
-    description: "一期演示环境 SSH 凭证",
+    description: "生产环境 SSH 凭证",
     secretValue: "-----BEGIN OPENSSH PRIVATE KEY-----demo-----END OPENSSH PRIVATE KEY-----",
     valueMasked: "-----BEGIN************KEY-----",
     usedBy: ["app-prod-01"],
@@ -542,7 +580,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     secretId,
     status: "HEALTHY",
     tags: ["production", "web"],
-    description: "一期演示主机",
+    description: "生产环境应用主机",
     lastCheckedAt: now(),
   });
 
@@ -552,7 +590,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     name: "harbor-basic-auth",
     type: "DOCKER_TOKEN",
     username: "release-bot",
-    description: "二期 Registry 演示凭证，mock 环境下存储为 basic auth 示例。",
+    description: "Harbor 基础认证凭证，按 username:password 形式保存。",
     secretValue: "release-bot:Harbor123!",
     valueMasked: maskSecret("release-bot:Harbor123!"),
     usedBy: ["harbor-prod"],
@@ -566,7 +604,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     url: "https://harbor.aegisops.local",
     authType: "BASIC",
     secretId: registrySecretId,
-    description: "生产镜像仓库，用于二期发布链路演示。",
+    description: "生产镜像仓库，用于服务版本管理与发布。",
     status: "ONLINE",
     lastTestAt: now(),
     createdBy: admin.id,
@@ -714,10 +752,10 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     resourceType: "service",
     resourceId: serviceId,
     initiatedBy: admin.displayName,
-    summary: "演示任务：发布 Aegis API 服务",
+    summary: "发布 Aegis API 服务",
     steps: ["校验服务定义", "固化镜像版本", "记录发布状态"],
   });
-  finishTask(db, serviceReleaseTask.id, "服务发布演示任务已完成。");
+  finishTask(db, serviceReleaseTask.id, "服务发布任务已完成。");
 
   db.services.push({
     id: serviceId,
@@ -725,7 +763,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     code: "aegisops-api",
     group: "core",
     tags: ["production", "api"],
-    description: "二期服务定义演示数据，复用 Registry 和 Docker 节点信息。",
+    description: "Aegis API 生产服务，关联镜像仓库与 Docker 节点。",
     registryId,
     image: "aegisops/api",
     defaultTag: "latest",
@@ -832,7 +870,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     resourceType: "container",
     resourceId: "container-nginx",
     initiatedBy: admin.displayName,
-    summary: "演示任务：重启网关容器",
+    summary: "重启网关容器",
     steps: ["检查目标容器", "发送重启命令", "校验容器状态"],
   });
   finishTask(db, task.id, "容器已成功重启。");
@@ -843,7 +881,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     resourceType: "system",
     resourceName: "bootstrap",
     result: "SUCCESS",
-    summary: "初始化管理员并注入一期演示数据。",
+    summary: "初始化管理员并注入基础数据。",
   });
   appendAudit(db, {
     actor: admin.displayName,
@@ -852,7 +890,7 @@ function seedDemoResources(db: MockDb, admin: StoredUser) {
     resourceId: registryId,
     resourceName: "harbor-prod",
     result: "SUCCESS",
-    summary: "注入二期 Registry 演示数据。",
+    summary: "接入 Harbor Registry 基础数据。",
   });
 }
 
@@ -1039,6 +1077,54 @@ function upgradeDemoResources(db: MockDb, admin: StoredUser) {
       valueMasked: maskSecret("invalid-basic-secret"),
       usedBy: [],
       updatedAt: timestampMinutesAgo(60 * 24 * 2),
+    }),
+  );
+
+  upsertItem(
+    db.secrets,
+    (item) => item.id === "secret-telegram-bot",
+    (): StoredSecret => ({
+      id: "secret-telegram-bot",
+      name: "notification-telegram-bot",
+      type: "API_TOKEN",
+      description: "Telegram bot token bundle for ops notifications.",
+      purpose: "notification_channel",
+      secretValue: JSON.stringify({ botToken: "demo-bot-token", chatId: "@aegisops_ops" }),
+      valueMasked: "te**************en",
+      usedBy: [],
+      updatedAt: timestampMinutesAgo(20),
+    }),
+  );
+
+  upsertItem(
+    db.secrets,
+    (item) => item.id === "secret-wecom-release",
+    (): StoredSecret => ({
+      id: "secret-wecom-release",
+      name: "notification-wecom-release",
+      type: "WEBHOOK",
+      description: "WeCom webhook credential for release notifications.",
+      purpose: "notification_channel",
+      secretValue: JSON.stringify({ webhookUrl: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=demo" }),
+      valueMasked: "ht****************************mo",
+      usedBy: [],
+      updatedAt: timestampMinutesAgo(45),
+    }),
+  );
+
+  upsertItem(
+    db.secrets,
+    (item) => item.id === "secret-email-oncall",
+    (): StoredSecret => ({
+      id: "secret-email-oncall",
+      name: "notification-email-oncall",
+      type: "SMTP",
+      description: "SMTP credential for oncall email alerting.",
+      purpose: "notification_channel",
+      secretValue: JSON.stringify({ username: "alerts", password: "mailpass-2026" }),
+      valueMasked: "sm****************26",
+      usedBy: [],
+      updatedAt: timestampMinutesAgo(63),
     }),
   );
 
@@ -1300,6 +1386,94 @@ function upgradeDemoResources(db: MockDb, admin: StoredUser) {
     upsertItem(db.containers, (item) => item.id === container.id, () => container, (existing) => {
       Object.assign(existing, container);
     });
+  }
+
+  const gatewayNginxNode = upsertItem(
+    db.nginxNodes,
+    (item) => item.id === "nginx-node-gateway-prod",
+    (): NginxNode => ({
+      id: "nginx-node-gateway-prod",
+      name: "gateway-prod-01",
+      hostId: prodHost.id,
+      hostName: prodHost.name,
+      configPath: "/etc/nginx/nginx.conf",
+      testCommand: "nginx -t",
+      reloadCommand: "nginx -s reload",
+      description: "Production gateway Nginx node.",
+      status: "ONLINE",
+      lastTestAt: timestampMinutesAgo(19),
+      createdAt: timestampMinutesAgo(60 * 24 * 7),
+      updatedAt: timestampMinutesAgo(19),
+    }),
+  );
+
+  const stagingNginxNode = upsertItem(
+    db.nginxNodes,
+    (item) => item.id === "nginx-node-gateway-staging",
+    (): NginxNode => ({
+      id: "nginx-node-gateway-staging",
+      name: "gateway-staging-01",
+      hostId: stagingHost.id,
+      hostName: stagingHost.name,
+      configPath: "/etc/nginx/nginx.conf",
+      testCommand: "nginx -t",
+      reloadCommand: "nginx -s reload",
+      description: "Staging gateway Nginx node under incident validation.",
+      status: "OFFLINE",
+      lastTestAt: timestampMinutesAgo(52),
+      createdAt: timestampMinutesAgo(60 * 24 * 5),
+      updatedAt: timestampMinutesAgo(52),
+    }),
+  );
+
+  const nginxConfigs: NginxConfigVersion[] = [
+    {
+      id: "nginx-config-prod-v12",
+      nodeId: gatewayNginxNode.id,
+      version: "v12",
+      content: "events {}\nhttp {\n  upstream api { server 127.0.0.1:18080; }\n  server { listen 80; }\n}\n",
+      checksum: "sha256-gateway-v12",
+      status: "ACTIVE",
+      message: "Current production gateway config.",
+      createdBy: admin.id,
+      createdAt: timestampMinutesAgo(60 * 24),
+      updatedAt: timestampMinutesAgo(60 * 24),
+    },
+    {
+      id: "nginx-config-staging-preview",
+      nodeId: stagingNginxNode.id,
+      version: "preview-login-fix",
+      content: "events {}\nhttp {\n  upstream console { server 127.0.0.1:4173; }\n  server { listen 80; }\n}\n",
+      checksum: "sha256-gateway-staging-preview",
+      status: "ACTIVE",
+      message: "Staging preview gateway config.",
+      createdBy: opsLead.id,
+      createdAt: timestampMinutesAgo(95),
+      updatedAt: timestampMinutesAgo(95),
+    },
+    {
+      id: "nginx-config-staging-main",
+      nodeId: stagingNginxNode.id,
+      version: "main-20260515",
+      content: "events {}\nhttp {\n  upstream console { server 127.0.0.1:4173; }\n  server { listen 80; }\n}\n",
+      checksum: "sha256-gateway-staging-main",
+      status: "DRAFT",
+      message: "Rollback target for staging console.",
+      createdBy: opsLead.id,
+      createdAt: timestampMinutesAgo(60 * 24),
+      updatedAt: timestampMinutesAgo(60 * 24),
+    },
+  ];
+
+  for (const config of nginxConfigs) {
+    upsertItem(
+      db.nginxConfigs,
+      (item) => item.id === config.id,
+      () => config,
+      (existing) => {
+        Object.assign(existing, config);
+      },
+    );
   }
 
   prodNode.containerCount = db.containers.filter((item) => item.nodeId === prodNode.id).length;
@@ -1919,6 +2093,338 @@ function upgradeDemoResources(db: MockDb, admin: StoredUser) {
     });
   }
 
+  const notificationChannels: NotificationChannel[] = [
+    {
+      id: "notification-channel-telegram-ops",
+      name: "Ops Telegram",
+      type: "TELEGRAM",
+      enabled: true,
+      language: "zh-CN",
+      target: "@aegisops_ops",
+      publicConfig: JSON.stringify({ chatId: "@aegisops_ops" }),
+      configSecretId: "secret-telegram-bot",
+      lastTestStatus: "SUCCESS",
+      lastTestAt: timestampMinutesAgo(18),
+      updatedAt: timestampMinutesAgo(18),
+    },
+    {
+      id: "notification-channel-wecom-release",
+      name: "Release WeCom",
+      type: "WECOM",
+      enabled: true,
+      language: "zh-CN",
+      target: "release-room",
+      configSecretId: "secret-wecom-release",
+      lastTestStatus: "SUCCESS",
+      lastTestAt: timestampMinutesAgo(44),
+      updatedAt: timestampMinutesAgo(44),
+    },
+    {
+      id: "notification-channel-email-oncall",
+      name: "Oncall Email",
+      type: "EMAIL",
+      enabled: true,
+      language: "en-US",
+      target: "oncall@aegisops.local",
+      publicConfig: JSON.stringify({ smtpHost: "smtp.aegisops.local", from: "alerts@aegisops.local", to: "oncall@aegisops.local" }),
+      configSecretId: "secret-email-oncall",
+      lastTestStatus: "FAILED",
+      lastTestAt: timestampMinutesAgo(62),
+      lastFailureReason: "smtp handshake timeout",
+      updatedAt: timestampMinutesAgo(62),
+    },
+  ];
+
+  for (const channel of notificationChannels) {
+    upsertItem(
+      db.notificationChannels,
+      (item) => item.id === channel.id,
+      () => channel,
+      (existing) => {
+        Object.assign(existing, channel);
+      },
+    );
+  }
+
+  const alertRules: AlertRule[] = [
+    {
+      id: "alert-rule-service-health-failed",
+      name: "服务探活失败通知",
+      eventType: "service_health_check_failed",
+      resourceType: "service",
+      resourceScope: "critical",
+      language: "zh-CN",
+      channelIds: ["notification-channel-telegram-ops", "notification-channel-email-oncall"],
+      enabled: true,
+      dedupeWindowSeconds: 300,
+      requireAck: true,
+      suppressDuplicates: true,
+      createdAt: timestampMinutesAgo(60 * 24 * 2),
+      updatedAt: timestampMinutesAgo(60 * 24 * 2),
+    },
+    {
+      id: "alert-rule-host-offline",
+      name: "主机离线通知",
+      eventType: "host_offline",
+      resourceType: "host",
+      resourceScope: "staging",
+      language: "en-US",
+      channelIds: ["notification-channel-telegram-ops", "notification-channel-wecom-release"],
+      enabled: true,
+      dedupeWindowSeconds: 180,
+      requireAck: true,
+      suppressDuplicates: true,
+      createdAt: timestampMinutesAgo(60 * 24 * 2),
+      updatedAt: timestampMinutesAgo(60 * 24 * 2),
+    },
+    {
+      id: "alert-rule-nginx-reload-failed",
+      name: "Nginx 重载失败通知",
+      eventType: "nginx_reload_failed",
+      resourceType: "nginx_node",
+      resourceScope: "gateway",
+      language: undefined,
+      channelIds: ["notification-channel-telegram-ops"],
+      enabled: true,
+      dedupeWindowSeconds: 120,
+      requireAck: false,
+      suppressDuplicates: true,
+      createdAt: timestampMinutesAgo(60 * 24),
+      updatedAt: timestampMinutesAgo(60 * 24),
+    },
+  ];
+
+  for (const rule of alertRules) {
+    upsertItem(
+      db.alertRules,
+      (item) => item.id === rule.id,
+      () => rule,
+      (existing) => {
+        Object.assign(existing, rule);
+      },
+    );
+  }
+
+  const healthChecks: ServiceHealthCheck[] = [
+    {
+      id: "healthcheck-api-v030",
+      serviceId: apiService.id,
+      releaseId: "release-api-v030",
+      taskId: apiReleaseTask.id,
+      strategyType: "HTTP",
+      target: "http://10.23.8.14:18080/healthz",
+      status: "SUCCESS",
+      httpStatus: 200,
+      latencyMs: 124,
+      output: "http status 200",
+      startedAt: timestampMinutesAgo(34),
+      finishedAt: timestampMinutesAgo(34),
+    },
+    {
+      id: "healthcheck-console-preview",
+      serviceId: consoleService.id,
+      releaseId: "release-console-preview",
+      taskId: consoleReleaseTask.id,
+      strategyType: "HTTP",
+      target: "http://10.10.12.33:4173/login",
+      status: "FAILED",
+      httpStatus: 504,
+      latencyMs: 6200,
+      output: "",
+      errorMessage: "post-login smoke check failed: users page did not finish rendering",
+      startedAt: timestampMinutesAgo(92),
+      finishedAt: timestampMinutesAgo(92),
+    },
+    {
+      id: "healthcheck-worker-v020",
+      serviceId: workerService.id,
+      releaseId: "release-worker-v020",
+      taskId: registrySyncTask.id,
+      strategyType: "COMMAND",
+      target: "worker heartbeat",
+      status: "SUCCESS",
+      latencyMs: 88,
+      output: "worker heartbeat ok",
+      startedAt: timestampMinutesAgo(60 * 10),
+      finishedAt: timestampMinutesAgo(60 * 10),
+    },
+  ];
+
+  for (const check of healthChecks) {
+    upsertItem(
+      db.serviceHealthChecks,
+      (item) => item.id === check.id,
+      () => check,
+      (existing) => {
+        Object.assign(existing, check);
+      },
+    );
+  }
+
+  const hostAvailabilityChecks: HostAvailabilityCheck[] = [
+    {
+      id: "host-availability-staging-offline",
+      hostId: stagingHost.id,
+      taskId: "task-host-test-staging-console",
+      status: "UNREACHABLE",
+      failureReason: "ssh handshake timeout for 10.10.12.33",
+      startedAt: timestampMinutesAgo(50),
+      finishedAt: timestampMinutesAgo(47),
+    },
+    {
+      id: "host-availability-worker-ok",
+      hostId: workerHost.id,
+      status: "HEALTHY",
+      startedAt: timestampMinutesAgo(26),
+      finishedAt: timestampMinutesAgo(26),
+    },
+    {
+      id: "host-availability-prod-ok",
+      hostId: prodHost.id,
+      status: "HEALTHY",
+      startedAt: timestampMinutesAgo(14),
+      finishedAt: timestampMinutesAgo(14),
+    },
+  ];
+
+  for (const check of hostAvailabilityChecks) {
+    upsertItem(
+      db.hostAvailabilityChecks,
+      (item) => item.id === check.id,
+      () => check,
+      (existing) => {
+        Object.assign(existing, check);
+      },
+    );
+  }
+
+  const alertEvents: AlertEvent[] = [
+    {
+      id: "alert-event-console-health",
+      eventType: "service_health_check_failed",
+      resourceType: "service",
+      resourceId: consoleService.id,
+      resourceName: consoleService.name,
+      taskId: consoleReleaseTask.id,
+      releaseId: "release-console-preview",
+      severity: "CRITICAL",
+      status: "OPEN",
+      summary: "Aegis Console 预发探活失败",
+      detail: "预发登录后用户页未完成渲染，建议回滚到 main-20260515。",
+      dedupeKey: "service_health_check_failed:service-aegis-console",
+      firstTriggeredAt: timestampMinutesAgo(92),
+      lastTriggeredAt: timestampMinutesAgo(92),
+      suggestedRollbackVersionId: consoleVersionMain.id,
+      suggestedRollbackVersion: consoleVersionMain.version,
+      notificationStatus: "FAILED",
+    },
+    {
+      id: "alert-event-staging-host-offline",
+      eventType: "host_offline",
+      resourceType: "host",
+      resourceId: stagingHost.id,
+      resourceName: stagingHost.name,
+      taskId: "task-host-test-staging-console",
+      severity: "CRITICAL",
+      status: "ACKED",
+      summary: "staging-console-01 离线",
+      detail: "SSH 握手超时，回滚命令无法在目标主机继续执行。",
+      dedupeKey: "host_offline:host-staging-console-01",
+      firstTriggeredAt: timestampMinutesAgo(47),
+      lastTriggeredAt: timestampMinutesAgo(47),
+      notificationStatus: "SUCCESS",
+    },
+    {
+      id: "alert-event-nginx-reload-failed",
+      eventType: "nginx_reload_failed",
+      resourceType: "nginx_node",
+      resourceId: stagingNginxNode.id,
+      resourceName: stagingNginxNode.name,
+      taskId: "task-nginx-reload-staging",
+      severity: "WARNING",
+      status: "RESOLVED",
+      summary: "预发网关 reload 失败",
+      detail: "nginx -t 通过，但 reload 阶段目标主机离线。",
+      dedupeKey: "nginx_reload_failed:nginx-node-gateway-staging",
+      firstTriggeredAt: timestampMinutesAgo(54),
+      lastTriggeredAt: timestampMinutesAgo(54),
+      resolvedAt: timestampMinutesAgo(40),
+      notificationStatus: "SUCCESS",
+    },
+  ];
+
+  for (const event of alertEvents) {
+    upsertItem(
+      db.alertEvents,
+      (item) => item.id === event.id,
+      () => event,
+      (existing) => {
+        Object.assign(existing, event);
+      },
+    );
+  }
+
+  const notificationRecords: NotificationRecord[] = [
+    {
+      id: "notification-record-console-telegram",
+      eventId: "alert-event-console-health",
+      channelId: "notification-channel-telegram-ops",
+      channelName: "Ops Telegram",
+      channelType: "TELEGRAM",
+      status: "SUCCESS",
+      providerMessageId: "tg-1024",
+      responseExcerpt: "message delivered",
+      createdAt: timestampMinutesAgo(92),
+      finishedAt: timestampMinutesAgo(92),
+    },
+    {
+      id: "notification-record-console-email",
+      eventId: "alert-event-console-health",
+      channelId: "notification-channel-email-oncall",
+      channelName: "Oncall Email",
+      channelType: "EMAIL",
+      status: "FAILED",
+      errorMessage: "smtp handshake timeout",
+      createdAt: timestampMinutesAgo(92),
+      finishedAt: timestampMinutesAgo(92),
+    },
+    {
+      id: "notification-record-host-offline-wecom",
+      eventId: "alert-event-staging-host-offline",
+      channelId: "notification-channel-wecom-release",
+      channelName: "Release WeCom",
+      channelType: "WECOM",
+      status: "SUCCESS",
+      providerMessageId: "wecom-7788",
+      responseExcerpt: "ok",
+      createdAt: timestampMinutesAgo(47),
+      finishedAt: timestampMinutesAgo(47),
+    },
+    {
+      id: "notification-record-nginx-telegram",
+      eventId: "alert-event-nginx-reload-failed",
+      channelId: "notification-channel-telegram-ops",
+      channelName: "Ops Telegram",
+      channelType: "TELEGRAM",
+      status: "SUCCESS",
+      providerMessageId: "tg-1038",
+      responseExcerpt: "message delivered",
+      createdAt: timestampMinutesAgo(54),
+      finishedAt: timestampMinutesAgo(54),
+    },
+  ];
+
+  for (const record of notificationRecords) {
+    upsertItem(
+      db.notificationRecords,
+      (item) => item.id === record.id,
+      () => record,
+      (existing) => {
+        Object.assign(existing, record);
+      },
+    );
+  }
+
   ensureAudit({
     actor: admin.displayName,
     action: "admin.setup",
@@ -2037,11 +2543,24 @@ function upgradeDemoResources(db: MockDb, admin: StoredUser) {
     }),
   );
 
+  applyDerivedServiceState(db, apiService.id);
+  applyDerivedServiceState(db, consoleService.id);
+  applyDerivedServiceState(db, workerService.id);
+  applyDerivedHostState(db, prodHost.id);
+  applyDerivedHostState(db, workerHost.id);
+  applyDerivedHostState(db, stagingHost.id);
+  applyDerivedNginxState(db, gatewayNginxNode.id);
+  applyDerivedNginxState(db, stagingNginxNode.id);
+
   db.tasks.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   db.audits.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   db.serviceVersions.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   db.serviceReleases.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   db.serviceInstances.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  db.serviceHealthChecks.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  db.hostAvailabilityChecks.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  db.notificationRecords.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  db.alertEvents.sort((left, right) => right.lastTriggeredAt.localeCompare(left.lastTriggeredAt));
   db.demoVersion = DEMO_DATASET_VERSION;
 }
 
@@ -2065,6 +2584,111 @@ function matchesResourceId(haystack: string, resourceId?: string) {
     return true;
   }
   return haystack.toLowerCase().includes(resourceId.trim().toLowerCase());
+}
+
+function latestBy<T>(items: T[], getTime: (item: T) => string | undefined) {
+  return [...items]
+    .filter((item) => Boolean(getTime(item)))
+    .sort((left, right) => (getTime(right) ?? "").localeCompare(getTime(left) ?? ""))[0];
+}
+
+function applyDerivedServiceState(db: MockDb, serviceId: string) {
+  const service = db.services.find((item) => item.id === serviceId);
+  if (!service) {
+    return;
+  }
+  const checks = db.serviceHealthChecks.filter((item) => item.serviceId === serviceId);
+  const releases = db.serviceReleases.filter((item) => item.serviceId === serviceId);
+  const relatedEvents = db.alertEvents.filter((item) => item.resourceType === "service" && item.resourceId === serviceId);
+  const relatedRecords = db.notificationRecords.filter((item) =>
+    relatedEvents.some((event) => event.id === item.eventId),
+  );
+  const latestCheck = latestBy(checks, (item) => item.startedAt);
+  const latestEvent = latestBy(relatedEvents, (item) => item.lastTriggeredAt);
+  const latestRecord = latestBy(relatedRecords, (item) => item.createdAt);
+  const rollbackTarget = db.serviceVersions
+    .filter((item) => item.serviceId === serviceId && item.version !== service.currentVersion)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+
+  db.serviceReleases = db.serviceReleases.map((release) => {
+    if (release.serviceId !== serviceId) {
+      return release;
+    }
+    const releaseCheck = checks.find((item) => item.releaseId === release.id);
+    const releaseEvent = relatedEvents.find((item) => item.releaseId === release.id);
+    const releaseRecord = relatedRecords.find((item) => item.eventId === releaseEvent?.id);
+    const isFailed = release.status === "FAILED" || releaseCheck?.status === "FAILED";
+    return {
+      ...release,
+      healthCheckStatus: releaseCheck?.status ?? release.healthCheckStatus,
+      notificationStatus: releaseRecord?.status ?? latestRecord?.status ?? release.notificationStatus,
+      rollbackSuggested: isFailed ? Boolean(rollbackTarget) : false,
+      suggestedRollbackVersionId: isFailed ? rollbackTarget?.id ?? "" : "",
+      suggestedRollbackVersion: isFailed ? rollbackTarget?.version ?? "" : "",
+      failureSummary:
+        release.failureSummary ??
+        releaseCheck?.errorMessage ??
+        releaseEvent?.summary ??
+        (release.status === "FAILED" ? release.message : ""),
+    };
+  });
+
+  if (latestCheck?.status === "FAILED") {
+    service.status = "ACTIVE";
+  }
+  if (latestEvent?.suggestedRollbackVersion) {
+    service.updatedAt = latestEvent.lastTriggeredAt;
+  }
+}
+
+function applyDerivedHostState(db: MockDb, hostId: string) {
+  const host = db.hosts.find((item) => item.id === hostId);
+  if (!host) {
+    return;
+  }
+  const checks = db.hostAvailabilityChecks
+    .filter((item) => item.hostId === hostId)
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  const latest = checks[0];
+  const latestFailure = checks.find((item) => item.status === "UNREACHABLE");
+  const latestRecovery = checks.find((item) => item.status === "HEALTHY");
+  const latestEvent = db.alertEvents
+    .filter((item) => item.resourceType === "host" && item.resourceId === hostId)
+    .sort((left, right) => right.lastTriggeredAt.localeCompare(left.lastTriggeredAt))[0];
+
+  host.lastCheckedAt = latest?.finishedAt ?? latest?.startedAt ?? host.lastCheckedAt;
+  host.lastOfflineAt = latestFailure?.finishedAt ?? latestFailure?.startedAt;
+  host.lastRecoveredAt = latestRecovery?.finishedAt ?? latestRecovery?.startedAt;
+  host.latestAlertStatus = latestEvent?.status;
+  host.consecutiveFailureCount = checks.findIndex((item) => item.status === "HEALTHY");
+  if ((host.consecutiveFailureCount ?? -1) < 0) {
+    host.consecutiveFailureCount = checks.filter((item) => item.status === "UNREACHABLE").length;
+  }
+}
+
+function applyDerivedNginxState(db: MockDb, nodeId: string) {
+  const node = db.nginxNodes.find((item) => item.id === nodeId);
+  if (!node) {
+    return;
+  }
+  const nginxTasks = db.tasks
+    .filter((item) => item.resourceType === "nginx_node" && item.resourceId === nodeId)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const reloadTask = nginxTasks.find((item) => item.type === "nginx.node.reload" || item.type === "nginx.config.publish");
+  const reloadFailure = nginxTasks.find(
+    (item) => (item.type === "nginx.node.reload" || item.type === "nginx.config.publish") && item.status === "FAILED",
+  );
+  const latestEvent = db.alertEvents
+    .filter((item) => item.resourceType === "nginx_node" && item.resourceId === nodeId)
+    .sort((left, right) => right.lastTriggeredAt.localeCompare(left.lastTriggeredAt))[0];
+  const latestRecord = db.notificationRecords
+    .filter((item) => item.eventId && item.eventId === latestEvent?.id)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+
+  node.lastReloadStatus = reloadTask?.status;
+  node.lastReloadAt = reloadTask?.finishedAt ?? reloadTask?.createdAt;
+  node.lastFailureReason = reloadFailure?.summary ?? reloadFailure?.logs.find((log) => log.level === "ERROR")?.message;
+  node.latestNotificationStatus = latestRecord?.status;
 }
 
 function getContainerLogs(container: ContainerItem) {
@@ -2372,6 +2996,8 @@ export const mockService = {
       dockerNodeCount: db.dockerNodes.length,
       containerCount: db.containers.length,
       unhealthyResourceCount,
+      openAlertCount: db.alertEvents.filter((item) => item.status === "OPEN" || item.status === "ACKED").length,
+      recentAlertEvents: db.alertEvents.slice(0, 5),
       recentTasks: db.tasks.slice(0, 5),
       recentAudits: db.audits.slice(0, 6),
     };
@@ -2886,6 +3512,40 @@ export const mockService = {
     return delay(db.serviceVersions.filter((item) => item.serviceId === serviceId));
   },
 
+  async listServiceHealthChecks(token: string | null, serviceId: string) {
+    const db = readDb();
+    requirePermission(token, "healthchecks.view", db);
+    getServiceOrThrow(db, serviceId);
+    return delay(db.serviceHealthChecks.filter((item) => item.serviceId === serviceId));
+  },
+
+  async getServiceRollbackSuggestion(token: string | null, serviceId: string): Promise<RollbackSuggestion> {
+    const db = readDb();
+    requirePermission(token, "services.release", db);
+    const service = getServiceOrThrow(db, serviceId);
+    const version = db.serviceVersions
+      .filter((item) => item.serviceId === serviceId && item.version !== service.currentVersion)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    if (!version) {
+      return delay({
+        serviceId,
+        suggestedVersionId: "",
+        suggestedVersion: "",
+        suggestedImageTag: "",
+        reason: "没有可用的上一稳定版本",
+        available: false,
+      });
+    }
+    return delay({
+      serviceId,
+      suggestedVersionId: version.id,
+      suggestedVersion: version.version,
+      suggestedImageTag: version.imageTag,
+      reason: "基于最近稳定版本给出回滚建议",
+      available: true,
+    });
+  },
+
   async releaseService(token: string | null, serviceId: string, payload: ServiceReleaseInput): Promise<ServiceReleaseResult> {
     const db = readDb();
     const actor = requirePermission(token, "services.release", db);
@@ -3382,6 +4042,562 @@ export const mockService = {
     const db = readDb();
     requirePermission(token, "docker.view", db);
     return delay(db.dockerNodes);
+  },
+
+  async listNginxNodes(token: string | null, keyword = "") {
+    const db = readDb();
+    requirePermission(token, "nginx.view", db);
+    const items = filterByKeyword(db.nginxNodes, keyword, (item) => `${item.name} ${item.configPath} ${item.description ?? ""}`);
+    return delay(items);
+  },
+
+  async getNginxNode(token: string | null, nodeId: string) {
+    const db = readDb();
+    requirePermission(token, "nginx.view", db);
+    const node = db.nginxNodes.find((item) => item.id === nodeId);
+    if (!node) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 节点不存在", traceId: traceId() });
+    }
+    return delay(node);
+  },
+
+  async saveNginxNode(token: string | null, payload: NginxNodeInput) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    if (!db.hosts.some((item) => item.id === payload.hostId)) {
+      throw new ApiError({ status: 422, code: "VALIDATION_ERROR", message: "请选择关联主机", traceId: traceId() });
+    }
+    if (payload.id) {
+      const node = db.nginxNodes.find((item) => item.id === payload.id);
+      if (!node) {
+        throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 节点不存在", traceId: traceId() });
+      }
+      Object.assign(node, {
+        name: payload.name,
+        hostId: payload.hostId,
+        hostName: db.hosts.find((item) => item.id === payload.hostId)?.name,
+        configPath: payload.configPath || "/etc/nginx/nginx.conf",
+        testCommand: payload.testCommand || "nginx -t",
+        reloadCommand: payload.reloadCommand || "nginx -s reload",
+        description: payload.description,
+        updatedAt: now(),
+      });
+      appendAudit(db, {
+        actor: actor.displayName,
+        action: "nginx_node.update",
+        resourceType: "nginx_node",
+        resourceId: node.id,
+        resourceName: node.name,
+        result: "SUCCESS",
+        summary: "Nginx 节点已更新",
+      });
+      writeDb(db);
+      return delay(node);
+    }
+    const node: NginxNode = {
+      id: crypto.randomUUID(),
+      name: payload.name,
+      hostId: payload.hostId,
+      hostName: db.hosts.find((item) => item.id === payload.hostId)?.name,
+      configPath: payload.configPath || "/etc/nginx/nginx.conf",
+      testCommand: payload.testCommand || "nginx -t",
+      reloadCommand: payload.reloadCommand || "nginx -s reload",
+      description: payload.description,
+      status: "UNKNOWN",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.nginxNodes.unshift(node);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "nginx_node.create",
+      resourceType: "nginx_node",
+      resourceId: node.id,
+      resourceName: node.name,
+      result: "SUCCESS",
+      summary: "Nginx 节点已创建",
+    });
+    writeDb(db);
+    return delay(node);
+  },
+
+  async deleteNginxNode(token: string | null, nodeId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    const node = db.nginxNodes.find((item) => item.id === nodeId);
+    if (!node) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 节点不存在", traceId: traceId() });
+    }
+    if (db.nginxConfigs.some((item) => item.nodeId === nodeId)) {
+      throw new ApiError({ status: 400, code: "RESOURCE_IN_USE", message: "节点存在配置版本，不能删除", traceId: traceId() });
+    }
+    db.nginxNodes = db.nginxNodes.filter((item) => item.id !== nodeId);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "nginx_node.delete",
+      resourceType: "nginx_node",
+      resourceId: node.id,
+      resourceName: node.name,
+      result: "SUCCESS",
+      summary: "Nginx 节点已删除",
+    });
+    writeDb(db);
+    return delay({ deleted: true });
+  },
+
+  async testNginxNode(token: string | null, nodeId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    const node = db.nginxNodes.find((item) => item.id === nodeId);
+    if (!node) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 节点不存在", traceId: traceId() });
+    }
+    const task = createTask(db, {
+      type: "nginx.node.test",
+      target: node.name,
+      resourceType: "nginx_node",
+      resourceId: node.id,
+      initiatedBy: actor.displayName,
+      summary: `测试 Nginx 配置 ${node.name}`,
+      steps: ["加载节点", "执行 nginx -t", "记录状态"],
+    });
+    writeDb(db);
+    window.setTimeout(() => {
+      const next = readDb();
+      const current = next.nginxNodes.find((item) => item.id === nodeId);
+      if (current) {
+        current.status = "ONLINE";
+        current.lastTestAt = now();
+        current.updatedAt = now();
+      }
+      finishTask(next, task.id, "Nginx 配置测试通过");
+      writeDb(next);
+    }, TASK_DELAY);
+    return delay({ ok: true, taskId: task.id });
+  },
+
+  async reloadNginxNode(token: string | null, nodeId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    const node = db.nginxNodes.find((item) => item.id === nodeId);
+    if (!node) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 节点不存在", traceId: traceId() });
+    }
+    const task = createTask(db, {
+      type: "nginx.node.reload",
+      target: node.name,
+      resourceType: "nginx_node",
+      resourceId: node.id,
+      initiatedBy: actor.displayName,
+      summary: `重载 Nginx ${node.name}`,
+      steps: ["执行 nginx -t", "执行 nginx reload", "写入审计"],
+    });
+    writeDb(db);
+    window.setTimeout(() => {
+      const next = readDb();
+      finishTask(next, task.id, "Nginx reload 已完成");
+      writeDb(next);
+    }, TASK_DELAY);
+    return delay({ ok: true, taskId: task.id });
+  },
+
+  async listNginxConfigs(token: string | null, nodeId: string) {
+    const db = readDb();
+    requirePermission(token, "nginx.view", db);
+    return delay(db.nginxConfigs.filter((item) => item.nodeId === nodeId));
+  },
+
+  async listNotificationChannels(token: string | null) {
+    const db = readDb();
+    requirePermission(token, "notifications.view", db);
+    return delay([...db.notificationChannels].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
+  },
+
+  async saveNotificationChannel(token: string | null, payload: NotificationChannelInput) {
+    const db = readDb();
+    const actor = requirePermission(token, "notifications.manage", db);
+    let resolvedSecretId = payload.configSecretId?.trim() || "";
+    if (!resolvedSecretId && payload.config?.trim()) {
+      const generatedSecretId = crypto.randomUUID();
+      const secretType =
+        payload.type === "WECOM" ? "WEBHOOK" : payload.type === "EMAIL" ? "SMTP" : "API_TOKEN";
+      db.secrets.unshift({
+        id: generatedSecretId,
+        name: `notification-${payload.type.toLowerCase()}-${payload.name.trim() || "channel"}`,
+        type: secretType,
+        description: "Notification channel sensitive config",
+        purpose: "notification_channel",
+        secretValue: payload.config.trim(),
+        valueMasked: maskSecret(payload.config.trim()),
+        usedBy: [],
+        updatedAt: now(),
+      });
+      resolvedSecretId = generatedSecretId;
+    }
+    if (payload.id) {
+      const channel = db.notificationChannels.find((item) => item.id === payload.id);
+      if (!channel) {
+        throw new ApiError({ status: 404, code: "NOT_FOUND", message: "通知通道不存在", traceId: traceId() });
+      }
+      if (channel.configSecretId) {
+        bindSecretUsage(db, channel.configSecretId, channel.name, false);
+      }
+      channel.name = payload.name;
+      channel.type = payload.type;
+      channel.enabled = payload.enabled;
+      channel.language = payload.language;
+      channel.target = payload.target;
+      channel.config = "";
+      channel.publicConfig = payload.publicConfig ?? "";
+      channel.configSecretId = resolvedSecretId;
+      channel.updatedAt = now();
+      bindSecretUsage(db, channel.configSecretId, channel.name, true);
+      appendAudit(db, {
+        actor: actor.displayName,
+        action: "notification_channel.update",
+        resourceType: "notification_channel",
+        resourceId: channel.id,
+        resourceName: channel.name,
+        result: "SUCCESS",
+        summary: "更新通知通道配置。",
+      });
+      writeDb(db);
+      return delay(channel);
+    }
+    const channel: NotificationChannel = {
+      id: crypto.randomUUID(),
+      name: payload.name,
+      type: payload.type,
+      enabled: payload.enabled,
+      language: payload.language,
+      target: payload.target,
+      config: "",
+      publicConfig: payload.publicConfig ?? "",
+      configSecretId: resolvedSecretId,
+      updatedAt: now(),
+    };
+    db.notificationChannels.unshift(channel);
+    bindSecretUsage(db, channel.configSecretId, channel.name, true);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "notification_channel.create",
+      resourceType: "notification_channel",
+      resourceId: channel.id,
+      resourceName: channel.name,
+      result: "SUCCESS",
+      summary: "创建通知通道。",
+    });
+    writeDb(db);
+    return delay(channel);
+  },
+
+  async deleteNotificationChannel(token: string | null, channelId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "notifications.manage", db);
+    const index = db.notificationChannels.findIndex((item) => item.id === channelId);
+    if (index < 0) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "通知通道不存在", traceId: traceId() });
+    }
+    const [channel] = db.notificationChannels.splice(index, 1);
+    bindSecretUsage(db, channel.configSecretId, channel.name, false);
+    db.notificationRecords = db.notificationRecords.filter((item) => item.channelId !== channelId);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "notification_channel.delete",
+      resourceType: "notification_channel",
+      resourceId: channel.id,
+      resourceName: channel.name,
+      result: "SUCCESS",
+      summary: "删除通知通道。",
+    });
+    writeDb(db);
+    return delay({ deleted: true });
+  },
+
+  async testNotificationChannel(token: string | null, channelId: string): Promise<NotificationTestResult> {
+    const db = readDb();
+    const actor = requirePermission(token, "notifications.test", db);
+    const channel = db.notificationChannels.find((item) => item.id === channelId);
+    if (!channel) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "通知通道不存在", traceId: traceId() });
+    }
+    const record: NotificationRecord = {
+      id: crypto.randomUUID(),
+      channelId: channel.id,
+      channelName: channel.name,
+      channelType: channel.type,
+      status: channel.enabled && channel.type !== "EMAIL" ? "SUCCESS" : "FAILED",
+      responseExcerpt: channel.enabled && channel.type !== "EMAIL" ? "mock notification delivered" : "",
+      errorMessage: channel.enabled && channel.type !== "EMAIL" ? "" : "smtp handshake timeout",
+      createdAt: now(),
+      finishedAt: now(),
+    };
+    db.notificationRecords.unshift(record);
+    channel.lastTestStatus = record.status;
+    channel.lastTestAt = record.finishedAt;
+    channel.lastFailureReason = record.errorMessage;
+    channel.updatedAt = now();
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "notification_channel.test",
+      resourceType: "notification_channel",
+      resourceId: channel.id,
+      resourceName: channel.name,
+      result: record.status === "SUCCESS" ? "SUCCESS" : "FAILED",
+      summary: record.status === "SUCCESS" ? "发送测试通知成功。" : record.errorMessage || "发送测试通知失败。",
+    });
+    writeDb(db);
+    return delay({ ok: record.status === "SUCCESS", recordId: record.id });
+  },
+
+  async listNotificationRecords(token: string | null) {
+    const db = readDb();
+    requirePermission(token, "notifications.view", db);
+    return delay([...db.notificationRecords].sort((left, right) => right.createdAt.localeCompare(left.createdAt)));
+  },
+
+  async listAlertRules(token: string | null) {
+    const db = readDb();
+    requirePermission(token, "alerts.view", db);
+    return delay([...db.alertRules].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
+  },
+
+  async saveAlertRule(token: string | null, payload: AlertRuleInput) {
+    const db = readDb();
+    const actor = requirePermission(token, "alerts.manage", db);
+    if (payload.id) {
+      const rule = db.alertRules.find((item) => item.id === payload.id);
+      if (!rule) {
+        throw new ApiError({ status: 404, code: "NOT_FOUND", message: "告警规则不存在", traceId: traceId() });
+      }
+      Object.assign(rule, {
+        name: payload.name,
+        eventType: payload.eventType,
+        resourceType: payload.resourceType,
+        resourceScope: payload.resourceScope,
+        language: payload.language,
+        channelIds: payload.channelIds,
+        enabled: payload.enabled,
+        dedupeWindowSeconds: payload.dedupeWindowSeconds,
+        requireAck: payload.requireAck,
+        suppressDuplicates: payload.suppressDuplicates,
+        updatedAt: now(),
+      });
+      appendAudit(db, {
+        actor: actor.displayName,
+        action: "alert_rule.update",
+        resourceType: "alert_rule",
+        resourceId: rule.id,
+        resourceName: rule.name,
+        result: "SUCCESS",
+        summary: "更新告警规则。",
+      });
+      writeDb(db);
+      return delay(rule);
+    }
+    const rule: AlertRule = {
+      id: crypto.randomUUID(),
+      name: payload.name,
+      eventType: payload.eventType,
+      resourceType: payload.resourceType,
+      resourceScope: payload.resourceScope,
+      language: payload.language,
+      channelIds: payload.channelIds,
+      enabled: payload.enabled,
+      dedupeWindowSeconds: payload.dedupeWindowSeconds,
+      requireAck: payload.requireAck,
+      suppressDuplicates: payload.suppressDuplicates,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.alertRules.unshift(rule);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "alert_rule.create",
+      resourceType: "alert_rule",
+      resourceId: rule.id,
+      resourceName: rule.name,
+      result: "SUCCESS",
+      summary: "创建告警规则。",
+    });
+    writeDb(db);
+    return delay(rule);
+  },
+
+  async deleteAlertRule(token: string | null, ruleId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "alerts.manage", db);
+    const index = db.alertRules.findIndex((item) => item.id === ruleId);
+    if (index < 0) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "告警规则不存在", traceId: traceId() });
+    }
+    const [rule] = db.alertRules.splice(index, 1);
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "alert_rule.delete",
+      resourceType: "alert_rule",
+      resourceId: rule.id,
+      resourceName: rule.name,
+      result: "SUCCESS",
+      summary: "删除告警规则。",
+    });
+    writeDb(db);
+    return delay({ deleted: true });
+  },
+
+  async listAlertEvents(
+    token: string | null,
+    filters?: {
+      status?: string;
+      eventType?: string;
+    },
+  ) {
+    const db = readDb();
+    requirePermission(token, "alerts.view", db);
+    let items = [...db.alertEvents];
+    if (filters?.status) {
+      items = items.filter((item) => item.status === filters.status);
+    }
+    if (filters?.eventType) {
+      items = items.filter((item) => item.eventType === filters.eventType);
+    }
+    items.sort((left, right) => right.lastTriggeredAt.localeCompare(left.lastTriggeredAt));
+    return delay(items);
+  },
+
+  async ackAlertEvent(token: string | null, eventId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "alerts.ack", db);
+    const event = db.alertEvents.find((item) => item.id === eventId);
+    if (!event) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "告警事件不存在", traceId: traceId() });
+    }
+    event.status = "ACKED";
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "alert_event.ack",
+      resourceType: "alert_event",
+      resourceId: event.id,
+      resourceName: event.summary,
+      result: "SUCCESS",
+      summary: "确认告警事件。",
+    });
+    writeDb(db);
+    return delay(event);
+  },
+
+  async resolveAlertEvent(token: string | null, eventId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "alerts.ack", db);
+    const event = db.alertEvents.find((item) => item.id === eventId);
+    if (!event) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "告警事件不存在", traceId: traceId() });
+    }
+    event.status = "RESOLVED";
+    event.resolvedAt = now();
+    appendAudit(db, {
+      actor: actor.displayName,
+      action: "alert_event.resolve",
+      resourceType: "alert_event",
+      resourceId: event.id,
+      resourceName: event.summary,
+      result: "SUCCESS",
+      summary: "关闭告警事件。",
+    });
+    writeDb(db);
+    return delay(event);
+  },
+
+  async listHostAvailability(token: string | null, hostId: string) {
+    const db = readDb();
+    requirePermission(token, "healthchecks.view", db);
+    return delay(db.hostAvailabilityChecks.filter((item) => item.hostId === hostId));
+  },
+
+  async publishNginxConfig(token: string | null, nodeId: string, configId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    const node = db.nginxNodes.find((item) => item.id === nodeId);
+    const config = db.nginxConfigs.find((item) => item.id === configId && item.nodeId === nodeId);
+    if (!node || !config) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 配置版本不存在", traceId: traceId() });
+    }
+    const task = createTask(db, {
+      type: "nginx.config.publish",
+      target: node.name,
+      resourceType: "nginx_node",
+      resourceId: node.id,
+      initiatedBy: actor.displayName,
+      summary: `发布配置 ${config.version} 到 ${node.configPath}`,
+      steps: ["加载配置版本", "备份远端配置", "写入远端配置", "执行 nginx -t", "执行 nginx reload", "激活版本"],
+    });
+    writeDb(db);
+    window.setTimeout(() => {
+      const next = readDb();
+      next.nginxConfigs = next.nginxConfigs.map((item) =>
+        item.nodeId === nodeId ? { ...item, status: item.id === configId ? "ACTIVE" : "DRAFT", updatedAt: now() } : item,
+      );
+      finishTask(next, task.id, `已发布 ${config.version}`);
+      writeDb(next);
+    }, TASK_DELAY);
+    return delay({ ok: true, taskId: task.id });
+  },
+
+  async saveNginxConfig(token: string | null, nodeId: string, payload: NginxConfigInput) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    if (!db.nginxNodes.some((item) => item.id === nodeId)) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 节点不存在", traceId: traceId() });
+    }
+    if (payload.activate) {
+      db.nginxConfigs = db.nginxConfigs.map((item) =>
+        item.nodeId === nodeId ? { ...item, status: "DRAFT" as const, updatedAt: now() } : item,
+      );
+    }
+    const config: NginxConfigVersion = {
+      id: crypto.randomUUID(),
+      nodeId,
+      version: payload.version,
+      content: payload.content,
+      checksum: crypto.randomUUID().replace(/-/g, ""),
+      status: payload.activate ? "ACTIVE" : "DRAFT",
+      message: payload.message,
+      createdBy: actor.displayName,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    db.nginxConfigs.unshift(config);
+    writeDb(db);
+    return delay(config);
+  },
+
+  async rollbackNginxConfig(token: string | null, nodeId: string, configId: string) {
+    const db = readDb();
+    const actor = requirePermission(token, "nginx.manage", db);
+    const node = db.nginxNodes.find((item) => item.id === nodeId);
+    const config = db.nginxConfigs.find((item) => item.id === configId && item.nodeId === nodeId);
+    if (!node || !config) {
+      throw new ApiError({ status: 404, code: "NOT_FOUND", message: "Nginx 配置版本不存在", traceId: traceId() });
+    }
+    db.nginxConfigs = db.nginxConfigs.map((item) =>
+      item.nodeId === nodeId ? { ...item, status: item.id === configId ? "ACTIVE" : "DRAFT", updatedAt: now() } : item,
+    );
+    const task = createTask(db, {
+      type: "nginx.config.rollback",
+      target: node.name,
+      resourceType: "nginx_node",
+      resourceId: node.id,
+      initiatedBy: actor.displayName,
+      summary: `回滚到 ${config.version}`,
+      steps: ["激活配置版本", "执行 nginx -t", "执行 nginx reload"],
+    });
+    writeDb(db);
+    window.setTimeout(() => {
+      const next = readDb();
+      finishTask(next, task.id, `已回滚到 ${config.version}`);
+      writeDb(next);
+    }, TASK_DELAY);
+    return delay({ ok: true, taskId: task.id });
   },
 
   async saveDockerNode(token: string | null, payload: DockerNodeInput) {

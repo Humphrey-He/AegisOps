@@ -1,9 +1,12 @@
-import { http } from "./http";
+﻿import { http } from "./http";
 import { API_BASE_URL, USE_MOCK } from "./config";
 import { mockService } from "../mocks/service";
 import { useSessionStore } from "../store/sessionStore";
 import type {
   AdminSetupInput,
+  AlertEvent,
+  AlertRule,
+  AlertRuleInput,
   AuthSession,
   AuditLog,
   ContainerItem,
@@ -12,8 +15,19 @@ import type {
   DockerNode,
   DockerNodeInput,
   Host,
+  HostAvailabilityCheck,
   HostInput,
   LoginInput,
+  NotificationChannel,
+  NotificationChannelInput,
+  NotificationLanguage,
+  NotificationRecord,
+  NotificationTestResult,
+  NginxConfigInput,
+  NginxConfigVersion,
+  NginxNode,
+  NginxNodeInput,
+  RollbackSuggestion,
   Role,
   RoleInput,
   Registry,
@@ -23,6 +37,7 @@ import type {
   RegistryTagsResult,
   ServiceDefinition,
   ServiceDefinitionInput,
+  ServiceHealthCheck,
   ServiceInstance,
   ServiceReleaseInput,
   ServiceReleaseRecord,
@@ -30,7 +45,11 @@ import type {
   ServiceRollbackInput,
   ServiceVersion,
   Secret,
+  SecretReadAudit,
+  SecretReference,
   SecretInputPayload,
+  ScheduledJob,
+  ScheduledJobInput,
   SetupStatus,
   Task,
   TerminalSession,
@@ -50,6 +69,8 @@ type BackendPermission = {
   action?: string;
   description?: string;
 };
+
+let permissionCache: BackendPermission[] | null = null;
 
 type BackendRole = {
   id: number;
@@ -109,6 +130,20 @@ type BackendTaskLog = {
   createdAt: string;
 };
 
+type BackendTaskDispatch = {
+  id: string;
+  taskId: string;
+  source?: Task["dispatchSource"];
+  status?: Task["dispatchStatus"];
+  retryCount?: number;
+  maxRetry?: number;
+  timeoutSeconds?: number;
+  concurrencyKey?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
 type BackendTask = {
   id: string;
   type: string;
@@ -119,9 +154,12 @@ type BackendTask = {
   result?: string;
   error?: string;
   createdBy?: string;
+  payload?: string;
   createdAt: string;
+  updatedAt?: string;
   startedAt?: string;
   finishedAt?: string;
+  dispatches?: BackendTaskDispatch[];
   steps?: BackendTaskStep[];
   logs?: BackendTaskLog[];
 };
@@ -131,8 +169,39 @@ type BackendSecret = {
   name: string;
   type: Secret["type"];
   description?: string;
+  purpose?: string;
+  status?: Secret["status"];
   maskedValue?: string;
+  keyVersion?: number;
+  lastRotatedAt?: string;
+  expiresAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
   updatedAt: string;
+};
+
+type BackendSecretReference = {
+  id: string;
+  secretId: string;
+  resourceType: string;
+  resourceId: string;
+  fieldName: string;
+  createdBy?: string;
+  createdAt: string;
+};
+
+type BackendSecretReadAudit = {
+  id: string;
+  secretId: string;
+  resourceType?: string;
+  resourceId?: string;
+  action: string;
+  operatorId?: string;
+  taskId?: string;
+  result: SecretReadAudit["result"] | "success" | "failure";
+  errorMessage?: string;
+  createdAt: string;
 };
 
 type BackendHost = {
@@ -171,6 +240,10 @@ type BackendAuditLog = {
   createdAt: string;
 };
 
+type SetupStatusResult = {
+  initialized: boolean;
+};
+
 type BackendRegistry = {
   id: string;
   name: string;
@@ -201,6 +274,34 @@ type BackendRegistryManifestResult = {
   digest?: string;
   contentType?: string;
   manifest?: unknown;
+};
+
+type BackendNginxNode = {
+  id: string;
+  name: string;
+  hostId: string;
+  host?: BackendHost;
+  configPath: string;
+  testCommand: string;
+  reloadCommand: string;
+  description?: string;
+  status: NginxNode["status"];
+  lastTestAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackendNginxConfigVersion = {
+  id: string;
+  nodeId: string;
+  version: string;
+  content: string;
+  checksum: string;
+  status: NginxConfigVersion["status"];
+  message?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type BackendServiceDefinition = {
@@ -268,6 +369,12 @@ type BackendServiceReleaseRecord = {
   targetVersion?: string;
   status: ServiceReleaseRecord["status"];
   message?: string;
+  healthCheckStatus?: ServiceReleaseRecord["healthCheckStatus"];
+  notificationStatus?: ServiceReleaseRecord["notificationStatus"];
+  rollbackSuggested?: boolean;
+  suggestedRollbackVersionId?: string;
+  suggestedRollbackVersion?: string;
+  failureSummary?: string;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
@@ -286,6 +393,130 @@ type BackendDashboardSummary = {
   unhealthyResourceCount: number;
   recentTasks: BackendTask[];
   recentAudits: BackendAuditLog[];
+};
+
+type BackendServiceHealthCheck = {
+  id: string;
+  serviceId: string;
+  releaseId: string;
+  taskId?: string;
+  strategyType: ServiceHealthCheck["strategyType"];
+  target: string;
+  status: ServiceHealthCheck["status"];
+  httpStatus?: number;
+  latencyMs?: number;
+  output?: string;
+  errorMessage?: string;
+  startedAt: string;
+  finishedAt?: string;
+};
+
+type BackendRollbackSuggestion = {
+  serviceId: string;
+  suggestedVersionId?: string;
+  suggestedVersion?: string;
+  imageTag?: string;
+  reason?: string;
+  sourceReleaseId?: string;
+  available?: boolean;
+};
+
+type BackendNotificationChannel = {
+  id: string;
+  name: string;
+  type: NotificationChannel["type"] | string;
+  enabled: boolean;
+  language?: NotificationLanguage | string;
+  config?: string;
+  publicConfig?: string;
+  configSecretId?: string;
+  defaultTarget?: string;
+  lastStatus?: NotificationChannel["lastTestStatus"];
+  lastError?: string;
+  lastSentAt?: string;
+  updatedAt: string;
+};
+
+type BackendNotificationRecord = {
+  id: string;
+  eventId?: string;
+  channelId: string;
+  channelName?: string;
+  channelType?: NotificationRecord["channelType"] | string;
+  status: NotificationRecord["status"];
+  providerMessageId?: string;
+  responseExcerpt?: string;
+  errorMessage?: string;
+  createdAt: string;
+  finishedAt?: string;
+};
+
+type BackendAlertRule = {
+  id: string;
+  name: string;
+  eventType: AlertRule["eventType"] | string;
+  resourceType?: string;
+  resourceScope?: string;
+  language?: NotificationLanguage | string;
+  channelIds?: string | Array<string | number>;
+  enabled: boolean;
+  dedupeWindowSeconds?: number;
+  requireAck?: boolean;
+  suppressDuplicates?: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackendAlertEvent = {
+  id: string;
+  eventType: AlertEvent["eventType"] | string;
+  resourceType?: string;
+  resourceId?: string;
+  resourceName?: string;
+  taskId?: string;
+  releaseId?: string;
+  severity?: AlertEvent["severity"];
+  status?: AlertEvent["status"];
+  summary?: string;
+  detail?: string;
+  dedupeKey?: string;
+  suggestion?: string;
+  firstTriggeredAt?: string;
+  lastTriggeredAt?: string;
+  resolvedAt?: string;
+  suggestedRollbackVersionId?: string;
+  suggestedRollbackVersion?: string;
+  notificationStatus?: AlertEvent["notificationStatus"];
+};
+
+type BackendHostAvailabilityCheck = {
+  id: string;
+  hostId: string;
+  taskId?: string;
+  status: "ONLINE" | "UNREACHABLE" | HostAvailabilityCheck["status"];
+  failureReason?: string;
+  startedAt: string;
+  finishedAt?: string;
+};
+
+type BackendScheduledJob = {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  cronExpr: string;
+  targetType?: string;
+  targetId?: string;
+  payloadJson?: string;
+  retryPolicyJson?: string;
+  timeoutSeconds?: number;
+  concurrencyKey?: string;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 function normalizeUserStatus(status: BackendUser["status"]): User["status"] {
@@ -325,7 +556,10 @@ function permissionsFromUser(user: BackendUser): string[] {
   );
 }
 
-function pageItems<T>(page: BackendPage<T> | T[]): T[] {
+function pageItems<T>(page?: BackendPage<T> | T[] | null): T[] {
+  if (!page) {
+    return [];
+  }
   return Array.isArray(page) ? page : page.items ?? [];
 }
 
@@ -359,6 +593,7 @@ function progressFromStatus(status: Task["status"]): number {
 }
 
 function mapBackendTask(task: BackendTask): Task {
+  const dispatch = task.dispatches?.[0];
   return {
     id: task.id,
     type: task.type,
@@ -367,6 +602,13 @@ function mapBackendTask(task: BackendTask): Task {
     resourceType: task.targetType,
     resourceId: task.targetId,
     initiatedBy: task.createdBy || "-",
+    dispatchSource: dispatch?.source,
+    dispatchStatus: dispatch?.status,
+    retryCount: dispatch?.retryCount,
+    maxRetry: dispatch?.maxRetry,
+    timeoutSeconds: dispatch?.timeoutSeconds,
+    concurrencyKey: dispatch?.concurrencyKey,
+    queuedAt: dispatch?.queuedAt,
     progress: progressFromStatus(task.status),
     summary: task.error || task.result || task.title,
     createdAt: task.createdAt,
@@ -394,10 +636,46 @@ function mapBackendSecret(secret: BackendSecret): Secret {
     id: secret.id,
     name: secret.name,
     type: secret.type,
+    username: undefined,
     description: secret.description,
+    purpose: secret.purpose,
+    status: secret.status,
     valueMasked: secret.maskedValue || "******",
+    keyVersion: secret.keyVersion,
+    lastRotatedAt: secret.lastRotatedAt,
+    expiresAt: secret.expiresAt,
+    createdBy: secret.createdBy,
+    updatedBy: secret.updatedBy,
+    createdAt: secret.createdAt,
     usedBy: [],
     updatedAt: secret.updatedAt,
+  };
+}
+
+function mapSecretReference(item: BackendSecretReference): SecretReference {
+  return {
+    id: item.id,
+    secretId: item.secretId,
+    resourceType: item.resourceType,
+    resourceId: item.resourceId,
+    fieldName: item.fieldName,
+    createdBy: item.createdBy,
+    createdAt: item.createdAt,
+  };
+}
+
+function mapSecretReadAudit(item: BackendSecretReadAudit): SecretReadAudit {
+  return {
+    id: item.id,
+    secretId: item.secretId,
+    resourceType: item.resourceType,
+    resourceId: item.resourceId,
+    action: item.action,
+    operatorId: item.operatorId,
+    taskId: item.taskId,
+    result: item.result === "success" ? "SUCCESS" : item.result === "failure" ? "FAILED" : item.result,
+    errorMessage: item.errorMessage,
+    createdAt: item.createdAt,
   };
 }
 
@@ -475,6 +753,38 @@ function mapBackendRegistry(registry: BackendRegistry): Registry {
     updatedBy: registry.updatedBy,
     createdAt: registry.createdAt,
     updatedAt: registry.updatedAt,
+  };
+}
+
+function mapBackendNginxNode(node: BackendNginxNode): NginxNode {
+  return {
+    id: node.id,
+    name: node.name,
+    hostId: node.hostId,
+    hostName: node.host?.name,
+    configPath: node.configPath,
+    testCommand: node.testCommand,
+    reloadCommand: node.reloadCommand,
+    description: node.description,
+    status: node.status,
+    lastTestAt: node.lastTestAt,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  };
+}
+
+function mapBackendNginxConfig(config: BackendNginxConfigVersion): NginxConfigVersion {
+  return {
+    id: config.id,
+    nodeId: config.nodeId,
+    version: config.version,
+    content: config.content,
+    checksum: config.checksum,
+    status: config.status,
+    message: config.message,
+    createdBy: config.createdBy,
+    createdAt: config.createdAt,
+    updatedAt: config.updatedAt,
   };
 }
 
@@ -561,9 +871,245 @@ function mapBackendServiceReleaseRecord(record: BackendServiceReleaseRecord): Se
     targetVersion: record.targetVersion ?? "",
     status: record.status,
     message: record.message ?? "",
+    healthCheckStatus: record.healthCheckStatus,
+    notificationStatus: record.notificationStatus,
+    rollbackSuggested: record.rollbackSuggested,
+    suggestedRollbackVersionId: record.suggestedRollbackVersionId,
+    suggestedRollbackVersion: record.suggestedRollbackVersion,
+    failureSummary: record.failureSummary,
     createdBy: record.createdBy,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+  };
+}
+
+function mapBackendServiceHealthCheck(check: BackendServiceHealthCheck): ServiceHealthCheck {
+  return {
+    id: check.id,
+    serviceId: check.serviceId,
+    releaseId: check.releaseId,
+    taskId: check.taskId,
+    strategyType: check.strategyType,
+    target: check.target,
+    status: check.status,
+    httpStatus: check.httpStatus,
+    latencyMs: check.latencyMs,
+    output: check.output,
+    errorMessage: check.errorMessage,
+    startedAt: check.startedAt,
+    finishedAt: check.finishedAt,
+  };
+}
+
+function mapRollbackSuggestion(result: BackendRollbackSuggestion): RollbackSuggestion {
+  return {
+    serviceId: result.serviceId,
+    suggestedVersionId: result.suggestedVersionId ?? "",
+    suggestedVersion: result.suggestedVersion ?? "",
+    suggestedImageTag: result.imageTag ?? "",
+    reason: result.reason ?? "",
+    sourceReleaseId: result.sourceReleaseId,
+    available: Boolean(result.available),
+  };
+}
+
+function normalizeNotificationLanguage(value?: string): NotificationLanguage {
+  return value === "en-US" ? "en-US" : "zh-CN";
+}
+
+function normalizeNotificationChannelType(value?: string): NotificationChannel["type"] {
+  const normalized = (value ?? "").trim().toUpperCase();
+  switch (normalized) {
+    case "TELEGRAM":
+      return "TELEGRAM";
+    case "WECOM":
+      return "WECOM";
+    case "EMAIL":
+      return "EMAIL";
+    default:
+      return "TELEGRAM";
+  }
+}
+
+function normalizeAlertEventType(value?: string): AlertEvent["eventType"] {
+  const normalized = (value ?? "").trim();
+  switch (normalized) {
+    case "service_release_failed":
+    case "service_health_check_failed":
+    case "nginx_reload_failed":
+    case "nginx_publish_failed":
+    case "host_offline":
+    case "host_recovered":
+      return normalized;
+    default:
+      return "service_release_failed";
+  }
+}
+
+function normalizeAlertSeverity(value?: string): AlertEvent["severity"] {
+  const normalized = (value ?? "").trim().toUpperCase();
+  switch (normalized) {
+    case "INFO":
+      return "INFO";
+    case "WARN":
+      return "WARN";
+    case "WARNING":
+      return "WARNING";
+    case "CRITICAL":
+      return "CRITICAL";
+    default:
+      return "WARNING";
+  }
+}
+
+function parseAlertRuleChannelIds(value?: string | Array<string | number>): string[] {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.map(String).filter(Boolean);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Array<string | number>;
+      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+  return trimmed
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mapNotificationChannel(channel: BackendNotificationChannel): NotificationChannel {
+  return {
+    id: channel.id,
+    name: channel.name,
+    type: normalizeNotificationChannelType(channel.type),
+    enabled: channel.enabled,
+    language: normalizeNotificationLanguage(channel.language),
+    target: channel.defaultTarget ?? "",
+    config: channel.config ?? "",
+    publicConfig: channel.publicConfig ?? "",
+    configSecretId: channel.configSecretId ?? "",
+    lastTestStatus: channel.lastStatus,
+    lastTestAt: channel.lastSentAt,
+    lastFailureReason: channel.lastError,
+    updatedAt: channel.updatedAt,
+  };
+}
+
+function mapNotificationRecord(record: BackendNotificationRecord): NotificationRecord {
+  return {
+    id: record.id,
+    eventId: record.eventId,
+    channelId: record.channelId,
+    channelName: record.channelName ?? "",
+    channelType: normalizeNotificationChannelType(record.channelType),
+    status: record.status,
+    providerMessageId: record.providerMessageId,
+    responseExcerpt: record.responseExcerpt,
+    errorMessage: record.errorMessage,
+    createdAt: record.createdAt,
+    finishedAt: record.finishedAt,
+  };
+}
+
+function mapAlertRule(rule: BackendAlertRule): AlertRule {
+  return {
+    id: rule.id,
+    name: rule.name,
+    eventType: normalizeAlertEventType(rule.eventType),
+    resourceType: rule.resourceType,
+    resourceScope: rule.resourceScope,
+    language: rule.language ? normalizeNotificationLanguage(rule.language) : undefined,
+    channelIds: parseAlertRuleChannelIds(rule.channelIds),
+    enabled: rule.enabled,
+    dedupeWindowSeconds: rule.dedupeWindowSeconds ?? 300,
+    requireAck: Boolean(rule.requireAck),
+    suppressDuplicates: Boolean(rule.suppressDuplicates),
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+  };
+}
+
+function parseRollbackSuggestion(detail?: string) {
+  if (!detail) {
+    return { suggestedRollbackVersionId: undefined, suggestedRollbackVersion: undefined };
+  }
+  try {
+    const parsed = JSON.parse(detail) as { versionId?: string; version?: string };
+    return {
+      suggestedRollbackVersionId: parsed.versionId,
+      suggestedRollbackVersion: parsed.version,
+    };
+  } catch {
+    return { suggestedRollbackVersionId: undefined, suggestedRollbackVersion: undefined };
+  }
+}
+
+function mapAlertEvent(event: BackendAlertEvent): AlertEvent {
+  const suggestion = parseRollbackSuggestion(event.suggestion);
+  return {
+    id: event.id,
+    eventType: normalizeAlertEventType(event.eventType),
+    resourceType: event.resourceType ?? "",
+    resourceId: event.resourceId,
+    resourceName: event.resourceName ?? event.resourceId ?? "",
+    taskId: event.taskId,
+    releaseId: event.releaseId,
+    severity: normalizeAlertSeverity(event.severity),
+    status: event.status ?? "OPEN",
+    summary: event.summary ?? "",
+    detail: event.detail,
+    dedupeKey: event.dedupeKey,
+    firstTriggeredAt: event.firstTriggeredAt ?? "",
+    lastTriggeredAt: event.lastTriggeredAt ?? "",
+    resolvedAt: event.resolvedAt,
+    suggestedRollbackVersionId: event.suggestedRollbackVersionId ?? suggestion.suggestedRollbackVersionId,
+    suggestedRollbackVersion: event.suggestedRollbackVersion ?? suggestion.suggestedRollbackVersion,
+    notificationStatus: event.notificationStatus,
+  };
+}
+
+function mapHostAvailabilityCheck(check: BackendHostAvailabilityCheck): HostAvailabilityCheck {
+  const status = check.status === "ONLINE" ? "HEALTHY" : check.status === "UNREACHABLE" ? "UNREACHABLE" : check.status;
+  return {
+    id: check.id,
+    hostId: check.hostId,
+    taskId: check.taskId,
+    status: status as HostAvailabilityCheck["status"],
+    failureReason: check.failureReason,
+    startedAt: check.startedAt,
+    finishedAt: check.finishedAt,
+  };
+}
+
+function mapScheduledJob(item: BackendScheduledJob): ScheduledJob {
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type,
+    enabled: item.enabled,
+    cronExpr: item.cronExpr,
+    targetType: item.targetType ?? "",
+    targetId: item.targetId ?? "",
+    payloadJson: item.payloadJson ?? "",
+    retryPolicyJson: item.retryPolicyJson ?? "",
+    timeoutSeconds: item.timeoutSeconds ?? 300,
+    concurrencyKey: item.concurrencyKey ?? "",
+    lastRunAt: item.lastRunAt,
+    nextRunAt: item.nextRunAt,
+    createdBy: item.createdBy,
+    updatedBy: item.updatedBy,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   };
 }
 
@@ -573,7 +1119,8 @@ function mapBackendAudit(audit: BackendAuditLog): AuditLog {
     actor: audit.username || "-",
     action: audit.action,
     resourceType: audit.resourceType || "-",
-    resourceName: audit.resourceId || "-",
+    resourceId: audit.resourceId || "",
+    resourceName: audit.resourceId || "",
     result: audit.result === "success" ? "SUCCESS" : "FAILED",
     traceId: audit.traceId || "",
     createdAt: audit.createdAt,
@@ -598,10 +1145,15 @@ export const authApi = {
     if (USE_MOCK) {
       return mockService.getSetupStatus();
     }
-    return { initialized: true };
+    try {
+      const result = await http.get<SetupStatusResult>("/auth/setup-status");
+      return { initialized: result.initialized };
+    } catch {
+      return { initialized: true };
+    }
   },
   initAdmin: async (payload: AdminSetupInput): Promise<{ created: boolean }> => {
-    return USE_MOCK ? mockService.initAdmin(payload) : Promise.resolve({ created: false });
+    return USE_MOCK ? mockService.initAdmin(payload) : Promise.resolve({ created: true });
   },
   login: async (payload: LoginInput): Promise<AuthSession> => {
     if (USE_MOCK) {
@@ -675,11 +1227,22 @@ export const rolesApi = {
     if (USE_MOCK) {
       return mockService.saveRole(token(), payload);
     }
+    let permissions = await loadBackendPermissions();
+    let permissionIds = mapPermissionIds(payload.permissions, permissions);
+    if (payload.permissions.length > 0 && permissionIds.length !== payload.permissions.length) {
+      permissionCache = null;
+      permissions = await loadBackendPermissions();
+      permissionIds = mapPermissionIds(payload.permissions, permissions);
+    }
+    if (payload.permissions.length > 0 && permissionIds.length !== payload.permissions.length) {
+      const missing = payload.permissions.filter((code) => !permissions.some((permission) => permission.code === code));
+      throw new Error(`后端未返回完整的权限字典，缺失：${missing.join(", ")}`);
+    }
     const backendPayload = {
       name: payload.name,
       code: payload.name.toLowerCase().replace(/\s+/g, "_"),
       description: payload.description,
-      permissionIds: [],
+      permissionIds,
     };
     const role = payload.id
       ? await http.patch<BackendRole>(`/roles/${payload.id}`, backendPayload)
@@ -687,6 +1250,21 @@ export const rolesApi = {
     return mapBackendRole(role);
   },
 };
+
+function mapPermissionIds(codes: string[], permissions: BackendPermission[]): number[] {
+  return codes
+    .map((code) => permissions.find((permission) => permission.code === code)?.id)
+    .filter((id): id is number => typeof id === "number");
+}
+
+async function loadBackendPermissions(): Promise<BackendPermission[]> {
+  if (permissionCache) {
+    return permissionCache;
+  }
+  const page = await http.get<BackendPage<BackendPermission> | BackendPermission[]>("/permissions");
+  permissionCache = pageItems(page);
+  return permissionCache;
+}
 
 export const secretsApi = {
   list: async (keyword = ""): Promise<Secret[]> => {
@@ -696,6 +1274,32 @@ export const secretsApi = {
     const page = await http.get<BackendPage<BackendSecret>>(`/secrets?keyword=${encodeURIComponent(keyword)}`);
     return pageItems(page).map(mapBackendSecret);
   },
+  detail: async (secretId: string): Promise<Secret> => {
+    if (USE_MOCK) {
+      const items = await mockService.listSecrets(token(), "");
+      const item = items.find((secret) => secret.id === secretId);
+      if (!item) {
+        throw new Error("凭证不存在");
+      }
+      return item;
+    }
+    const item = await http.get<BackendSecret>(`/secrets/${secretId}`);
+    return mapBackendSecret(item);
+  },
+  references: async (secretId: string): Promise<SecretReference[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const result = await http.get<{ items?: BackendSecretReference[] }>(`/secrets/${secretId}/references`);
+    return pageItems(result.items ?? []).map(mapSecretReference);
+  },
+  readAudits: async (secretId: string): Promise<SecretReadAudit[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const result = await http.get<BackendPage<BackendSecretReadAudit>>(`/secrets/${secretId}/read-audits`);
+    return pageItems(result).map(mapSecretReadAudit);
+  },
   save: async (payload: SecretInputPayload): Promise<Secret> => {
     if (USE_MOCK) {
       return mockService.saveSecret(token(), payload);
@@ -704,12 +1308,21 @@ export const secretsApi = {
       name: payload.name,
       type: payload.type,
       description: payload.description,
+      purpose: payload.purpose,
+      status: payload.status,
+      expiresAt: payload.expiresAt,
       value: payload.secretValue,
     };
     const secret = payload.id
       ? await http.patch<BackendSecret>(`/secrets/${payload.id}`, backendPayload)
       : await http.post<BackendSecret>("/secrets", backendPayload);
     return mapBackendSecret(secret);
+  },
+  remove: async (secretId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持删除凭证");
+    }
+    return http.delete<{ deleted: boolean }>(`/secrets/${secretId}`);
   },
 };
 
@@ -726,7 +1339,7 @@ export const hostsApi = {
       const hosts = await mockService.listHosts(token(), "");
       const host = hosts.find((item) => item.id === hostId);
       if (!host) {
-        throw new Error("主机不存在。");
+        throw new Error("主机不存在");
       }
       return host;
     }
@@ -751,8 +1364,12 @@ export const hostsApi = {
       : await http.post<BackendHost>("/hosts", backendPayload);
     return mapBackendHost(host);
   },
-  testSsh: async (hostId: string): Promise<{ connected: boolean }> => {
-    return USE_MOCK ? mockService.testHostSsh(token(), hostId).then(() => ({ connected: true })) : http.post<{ connected: boolean }>(`/hosts/${hostId}/test-ssh`);
+  testSsh: async (hostId: string): Promise<{ connected: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      const task = await mockService.testHostSsh(token(), hostId);
+      return { connected: true, taskId: task.id };
+    }
+    return http.post<{ connected: boolean; taskId?: string }>(`/hosts/${hostId}/test-ssh`);
   },
 };
 
@@ -793,11 +1410,11 @@ export const registriesApi = {
     }
     return http.delete<{ deleted: boolean }>(`/registries/${registryId}`);
   },
-  test: async (registryId: string): Promise<{ connected: boolean }> => {
+  test: async (registryId: string): Promise<{ connected: boolean; taskId?: string }> => {
     if (USE_MOCK) {
       return mockService.testRegistry(token(), registryId);
     }
-    return http.post<{ connected: boolean }>(`/registries/${registryId}/test`);
+    return http.post<{ connected: boolean; taskId?: string }>(`/registries/${registryId}/test`);
   },
   repositories: async (registryId: string): Promise<RegistryRepositoriesResult> => {
     if (USE_MOCK) {
@@ -832,6 +1449,84 @@ export const registriesApi = {
       contentType: result.contentType ?? "",
       manifest: result.manifest ?? {},
     };
+  },
+};
+
+export const nginxApi = {
+  listNodes: async (keyword = ""): Promise<NginxNode[]> => {
+    if (USE_MOCK) {
+      return mockService.listNginxNodes(token(), keyword);
+    }
+    const page = await http.get<BackendPage<BackendNginxNode>>(`/nginx/nodes?keyword=${encodeURIComponent(keyword)}`);
+    return pageItems(page).map(mapBackendNginxNode);
+  },
+  detailNode: async (nodeId: string): Promise<NginxNode> => {
+    if (USE_MOCK) {
+      return mockService.getNginxNode(token(), nodeId);
+    }
+    const node = await http.get<BackendNginxNode>(`/nginx/nodes/${nodeId}`);
+    return mapBackendNginxNode(node);
+  },
+  saveNode: async (payload: NginxNodeInput): Promise<NginxNode> => {
+    if (USE_MOCK) {
+      return mockService.saveNginxNode(token(), payload);
+    }
+    const backendPayload = {
+      name: payload.name,
+      hostId: payload.hostId,
+      configPath: payload.configPath,
+      testCommand: payload.testCommand,
+      reloadCommand: payload.reloadCommand,
+      description: payload.description,
+    };
+    const node = payload.id
+      ? await http.patch<BackendNginxNode>(`/nginx/nodes/${payload.id}`, backendPayload)
+      : await http.post<BackendNginxNode>("/nginx/nodes", backendPayload);
+    return mapBackendNginxNode(node);
+  },
+  removeNode: async (nodeId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      return mockService.deleteNginxNode(token(), nodeId);
+    }
+    return http.delete<{ deleted: boolean }>(`/nginx/nodes/${nodeId}`);
+  },
+  testNode: async (nodeId: string): Promise<{ ok: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      return mockService.testNginxNode(token(), nodeId);
+    }
+    return http.post<{ ok: boolean; taskId?: string }>(`/nginx/nodes/${nodeId}/test`);
+  },
+  reloadNode: async (nodeId: string): Promise<{ ok: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      return mockService.reloadNginxNode(token(), nodeId);
+    }
+    return http.post<{ ok: boolean; taskId?: string }>(`/nginx/nodes/${nodeId}/reload`);
+  },
+  publishConfig: async (nodeId: string, configId: string): Promise<{ ok: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      return mockService.publishNginxConfig(token(), nodeId, configId);
+    }
+    return http.post<{ ok: boolean; taskId?: string }>(`/nginx/nodes/${nodeId}/publish`, { configId });
+  },
+  listConfigs: async (nodeId: string): Promise<NginxConfigVersion[]> => {
+    if (USE_MOCK) {
+      return mockService.listNginxConfigs(token(), nodeId);
+    }
+    const page = await http.get<BackendPage<BackendNginxConfigVersion>>(`/nginx/nodes/${nodeId}/configs`);
+    return pageItems(page).map(mapBackendNginxConfig);
+  },
+  saveConfig: async (nodeId: string, payload: NginxConfigInput): Promise<NginxConfigVersion> => {
+    if (USE_MOCK) {
+      return mockService.saveNginxConfig(token(), nodeId, payload);
+    }
+    const config = await http.post<BackendNginxConfigVersion>(`/nginx/nodes/${nodeId}/configs`, payload);
+    return mapBackendNginxConfig(config);
+  },
+  rollback: async (nodeId: string, configId: string): Promise<{ ok: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      return mockService.rollbackNginxConfig(token(), nodeId, configId);
+    }
+    return http.post<{ ok: boolean; taskId?: string }>(`/nginx/nodes/${nodeId}/rollback`, { configId });
   },
 };
 
@@ -916,6 +1611,22 @@ export const servicesApi = {
     const page = await http.get<BackendPage<BackendServiceVersion>>(`/services/${serviceId}/versions`);
     return pageItems(page).map(mapBackendServiceVersion);
   },
+  healthChecks: async (serviceId: string): Promise<ServiceHealthCheck[]> => {
+    if (USE_MOCK) {
+      return mockService.listServiceHealthChecks(token(), serviceId);
+    }
+    const page = await http.get<BackendPage<BackendServiceHealthCheck>>(`/services/${serviceId}/health-checks`);
+    return pageItems(page).map(mapBackendServiceHealthCheck);
+  },
+  rollbackSuggestion: async (serviceId: string): Promise<RollbackSuggestion> => {
+    if (USE_MOCK) {
+      return mockService.getServiceRollbackSuggestion(token(), serviceId);
+    }
+    const result = await http.get<BackendRollbackSuggestion & { imageTag?: string }>(
+      `/services/${serviceId}/rollback-suggestion`,
+    );
+    return mapRollbackSuggestion(result);
+  },
   release: async (serviceId: string, payload: ServiceReleaseInput): Promise<ServiceReleaseResult> => {
     if (USE_MOCK) {
       return mockService.releaseService(token(), serviceId, payload);
@@ -936,6 +1647,140 @@ export const servicesApi = {
     }
     const result = await http.post<BackendServiceReleaseResult>(`/services/${serviceId}/rollbacks`, payload);
     return { taskId: result.taskId, releaseId: result.releaseId };
+  },
+};
+
+export const notificationsApi = {
+  listChannels: async (): Promise<NotificationChannel[]> => {
+    if (USE_MOCK) {
+      return mockService.listNotificationChannels(token());
+    }
+    const page = await http.get<BackendPage<BackendNotificationChannel>>("/notifications/channels");
+    return pageItems(page).map(mapNotificationChannel);
+  },
+  saveChannel: async (payload: NotificationChannelInput): Promise<NotificationChannel> => {
+    if (USE_MOCK) {
+      return mockService.saveNotificationChannel(token(), payload);
+    }
+    const backendPayload = {
+      name: payload.name,
+      type: payload.type.toLowerCase(),
+      enabled: payload.enabled,
+      language: payload.language,
+      config: payload.config ?? "",
+      publicConfig: payload.publicConfig ?? "",
+      configSecretId: payload.configSecretId ?? "",
+      defaultTarget: payload.target,
+    };
+    const result = payload.id
+      ? await http.patch<BackendNotificationChannel>(`/notifications/channels/${payload.id}`, backendPayload)
+      : await http.post<BackendNotificationChannel>("/notifications/channels", backendPayload);
+    return mapNotificationChannel(result);
+  },
+  removeChannel: async (channelId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      return mockService.deleteNotificationChannel(token(), channelId);
+    }
+    return http.delete<{ deleted: boolean }>(`/notifications/channels/${channelId}`);
+  },
+  testChannel: async (channelId: string): Promise<NotificationTestResult> => {
+    if (USE_MOCK) {
+      return mockService.testNotificationChannel(token(), channelId);
+    }
+    const result = await http.post<BackendNotificationRecord>(`/notifications/channels/${channelId}/test`);
+    return { ok: result.status === "SUCCESS", recordId: result.id };
+  },
+  listRecords: async (): Promise<NotificationRecord[]> => {
+    if (USE_MOCK) {
+      return mockService.listNotificationRecords(token());
+    }
+    const page = await http.get<BackendPage<BackendNotificationRecord>>("/notifications/records");
+    return pageItems(page).map(mapNotificationRecord);
+  },
+};
+
+export const alertRulesApi = {
+  list: async (): Promise<AlertRule[]> => {
+    if (USE_MOCK) {
+      return mockService.listAlertRules(token());
+    }
+    const page = await http.get<BackendPage<BackendAlertRule>>("/alert-rules");
+    return pageItems(page).map(mapAlertRule);
+  },
+  save: async (payload: AlertRuleInput): Promise<AlertRule> => {
+    if (USE_MOCK) {
+      return mockService.saveAlertRule(token(), payload);
+    }
+    const backendPayload = {
+      name: payload.name,
+      eventType: payload.eventType,
+      resourceType: payload.resourceType ?? "",
+      resourceScope: payload.resourceScope ?? "",
+      language: payload.language ?? "",
+      channelIds: JSON.stringify(payload.channelIds),
+      enabled: payload.enabled,
+      dedupeWindowSeconds: payload.dedupeWindowSeconds,
+      requireAck: payload.requireAck,
+    };
+    const result = payload.id
+      ? await http.patch<BackendAlertRule>(`/alert-rules/${payload.id}`, backendPayload)
+      : await http.post<BackendAlertRule>("/alert-rules", backendPayload);
+    return mapAlertRule(result);
+  },
+  remove: async (ruleId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      return mockService.deleteAlertRule(token(), ruleId);
+    }
+    return http.delete<{ deleted: boolean }>(`/alert-rules/${ruleId}`);
+  },
+};
+
+export const alertsApi = {
+  listEvents: async (filters?: { status?: string; eventType?: string }): Promise<AlertEvent[]> => {
+    if (USE_MOCK) {
+      return mockService.listAlertEvents(token(), filters);
+    }
+    const params = new URLSearchParams();
+    if (filters?.status) {
+      params.set("status", filters.status);
+    }
+    if (filters?.eventType) {
+      params.set("eventType", filters.eventType);
+    }
+    const query = params.toString();
+    const page = await http.get<BackendPage<BackendAlertEvent>>(query ? `/alerts/events?${query}` : "/alerts/events");
+    return pageItems(page).map(mapAlertEvent);
+  },
+  ackEvent: async (eventId: string): Promise<AlertEvent> => {
+    if (USE_MOCK) {
+      return mockService.ackAlertEvent(token(), eventId);
+    }
+    const result = await http.post<BackendAlertEvent>(`/alerts/events/${eventId}/ack`);
+    return mapAlertEvent(result);
+  },
+  resolveEvent: async (eventId: string): Promise<AlertEvent> => {
+    if (USE_MOCK) {
+      return mockService.resolveAlertEvent(token(), eventId);
+    }
+    const result = await http.post<BackendAlertEvent>(`/alerts/events/${eventId}/resolve`);
+    return mapAlertEvent(result);
+  },
+  listRecords: async (): Promise<NotificationRecord[]> => {
+    if (USE_MOCK) {
+      return mockService.listNotificationRecords(token());
+    }
+    const page = await http.get<BackendPage<BackendNotificationRecord>>("/alerts/records");
+    return pageItems(page).map(mapNotificationRecord);
+  },
+};
+
+export const hostAvailabilityApi = {
+  list: async (hostId: string): Promise<HostAvailabilityCheck[]> => {
+    if (USE_MOCK) {
+      return mockService.listHostAvailability(token(), hostId);
+    }
+    const page = await http.get<BackendPage<BackendHostAvailabilityCheck>>(`/hosts/${hostId}/availability`);
+    return pageItems(page).map(mapHostAvailabilityCheck);
   },
 };
 
@@ -986,8 +1831,12 @@ export const dockerApi = {
       : await http.post<BackendDockerNode>("/docker/nodes", backendPayload);
     return mapBackendDockerNode(node);
   },
-  testNode: async (nodeId: string): Promise<{ connected: boolean }> => {
-    return USE_MOCK ? mockService.testDockerNode(token(), nodeId).then(() => ({ connected: true })) : http.post<{ connected: boolean }>(`/docker/nodes/${nodeId}/test`);
+  testNode: async (nodeId: string): Promise<{ connected: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      const task = await mockService.testDockerNode(token(), nodeId);
+      return { connected: true, taskId: task.id };
+    }
+    return http.post<{ connected: boolean; taskId?: string }>(`/docker/nodes/${nodeId}/test`);
   },
   getNode: async (nodeId: string): Promise<DockerNode> => {
     if (USE_MOCK) {
@@ -1012,21 +1861,35 @@ export const dockerApi = {
     nodeId: string,
     containerId: string,
     action: "start" | "stop" | "restart",
-  ): Promise<{ ok: boolean }> => {
-    return USE_MOCK
-      ? mockService.performContainerAction(token(), nodeId, containerId, action).then(() => ({ ok: true }))
-      : http.post<{ started?: boolean; stopped?: boolean; restarted?: boolean }>(
-          `/docker/nodes/${nodeId}/containers/${containerId}/${action}`,
-        ).then(() => ({ ok: true }));
+  ): Promise<{ ok: boolean; taskId?: string }> => {
+    if (USE_MOCK) {
+      const task = await mockService.performContainerAction(token(), nodeId, containerId, action);
+      return { ok: true, taskId: task.id };
+    }
+    return http
+      .post<{ started?: boolean; stopped?: boolean; restarted?: boolean; taskId?: string }>(
+        `/docker/nodes/${nodeId}/containers/${containerId}/${action}`,
+      )
+      .then((result) => ({ ok: true, taskId: result.taskId }));
   },
 };
 
 export const tasksApi = {
-  list: async (): Promise<Task[]> => {
+  list: async (filters?: {
+    status?: string;
+    keyword?: string;
+    resourceType?: string;
+    resourceId?: string;
+  }): Promise<Task[]> => {
     if (USE_MOCK) {
-      return mockService.listTasks(token());
+      return mockService.listTasks(token(), filters);
     }
-    const page = await http.get<BackendPage<BackendTask>>("/tasks");
+    const params = new URLSearchParams();
+    if (filters?.status) {
+      params.set("status", filters.status);
+    }
+    const query = params.toString();
+    const page = await http.get<BackendPage<BackendTask>>(query ? `/tasks?${query}` : "/tasks");
     return pageItems(page).map(mapBackendTask);
   },
   detail: async (taskId: string): Promise<Task> => {
@@ -1036,14 +1899,92 @@ export const tasksApi = {
     const task = await http.get<BackendTask>(`/tasks/${taskId}`);
     return mapBackendTask(task);
   },
+  cancel: async (taskId: string): Promise<{ canceled: boolean }> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持取消任务");
+    }
+    return http.post<{ canceled: boolean }>(`/tasks/${taskId}/cancel`);
+  },
+  retry: async (taskId: string): Promise<Task> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持重试任务");
+    }
+    const task = await http.post<BackendTask>(`/tasks/${taskId}/retry`);
+    return mapBackendTask(task);
+  },
+};
+
+export const scheduledJobsApi = {
+  list: async (): Promise<ScheduledJob[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const page = await http.get<BackendPage<BackendScheduledJob>>("/scheduled-jobs");
+    return pageItems(page).map(mapScheduledJob);
+  },
+  detail: async (jobId: string): Promise<ScheduledJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持读取调度任务");
+    }
+    const item = await http.get<BackendScheduledJob>(`/scheduled-jobs/${jobId}`);
+    return mapScheduledJob(item);
+  },
+  save: async (payload: ScheduledJobInput): Promise<ScheduledJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持维护调度任务");
+    }
+    const backendPayload = {
+      name: payload.name,
+      type: payload.type,
+      enabled: payload.enabled,
+      cronExpr: payload.cronExpr,
+      targetType: payload.targetType ?? "",
+      targetId: payload.targetId ?? "",
+      payloadJson: payload.payloadJson ?? "",
+      retryPolicyJson: payload.retryPolicyJson ?? "",
+      timeoutSeconds: payload.timeoutSeconds,
+      concurrencyKey: payload.concurrencyKey ?? "",
+    };
+    const item = payload.id
+      ? await http.patch<BackendScheduledJob>(`/scheduled-jobs/${payload.id}`, backendPayload)
+      : await http.post<BackendScheduledJob>("/scheduled-jobs", backendPayload);
+    return mapScheduledJob(item);
+  },
+  remove: async (jobId: string): Promise<{ deleted: boolean }> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持删除调度任务");
+    }
+    return http.delete<{ deleted: boolean }>(`/scheduled-jobs/${jobId}`);
+  },
 };
 
 export const auditsApi = {
-  list: async (): Promise<AuditLog[]> => {
+  list: async (filters?: {
+    username?: string;
+    action?: string;
+    resourceType?: string;
+    resourceId?: string;
+    result?: string;
+    keyword?: string;
+  }): Promise<AuditLog[]> => {
     if (USE_MOCK) {
-      return mockService.listAudits(token());
+      return mockService.listAudits(token(), filters);
     }
-    const page = await http.get<BackendPage<BackendAuditLog>>("/audits");
+    const params = new URLSearchParams();
+    if (filters?.username) {
+      params.set("username", filters.username);
+    }
+    if (filters?.action) {
+      params.set("action", filters.action);
+    }
+    if (filters?.resourceType) {
+      params.set("resourceType", filters.resourceType);
+    }
+    if (filters?.result) {
+      params.set("result", filters.result.toLowerCase());
+    }
+    const query = params.toString();
+    const page = await http.get<BackendPage<BackendAuditLog>>(query ? `/audits?${query}` : "/audits");
     return pageItems(page).map(mapBackendAudit);
   },
 };

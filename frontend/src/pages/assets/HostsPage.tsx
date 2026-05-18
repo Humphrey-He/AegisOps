@@ -12,7 +12,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { auditsApi, hostsApi, secretsApi, tasksApi } from "../../lib/api";
+import { alertsApi, auditsApi, hostAvailabilityApi, hostsApi, secretsApi, tasksApi, terminalApi } from "../../lib/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
@@ -25,6 +25,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { formatDateTime } from "../../lib/format";
+import { auditMatchesResource, buildAuditsPath, buildTasksPath, taskMatchesResource } from "../../lib/resourceNavigation";
 import { TaskStatus } from "../../components/TaskStatus";
 import type { Host, HostInput } from "../../types/models";
 
@@ -59,21 +60,31 @@ export function HostsPage() {
   });
   const tasksQuery = useQuery({
     queryKey: queryKeys.tasks,
-    queryFn: tasksApi.list,
+    queryFn: () => tasksApi.list(),
   });
   const auditsQuery = useQuery({
     queryKey: queryKeys.audits,
-    queryFn: auditsApi.list,
+    queryFn: () => auditsApi.list(),
   });
   const hostDetailQuery = useQuery({
     queryKey: queryKeys.host(selectedHostId),
     queryFn: () => hostsApi.detail(selectedHostId),
     enabled: Boolean(selectedHostId),
   });
+  const hostAvailabilityQuery = useQuery({
+    queryKey: queryKeys.hostAvailability(selectedHostId),
+    queryFn: () => hostAvailabilityApi.list(selectedHostId),
+    enabled: Boolean(selectedHostId),
+  });
+  const alertEventsQuery = useQuery({
+    queryKey: [...queryKeys.alertEvents, "host", selectedHostId],
+    queryFn: () => alertsApi.listEvents(),
+    enabled: Boolean(selectedHostId),
+  });
 
   const saveMutation = useMutation({
     mutationFn: hostsApi.save,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["hosts"] });
       await message.success(editingHost ? "主机已更新" : "主机已创建");
       setDrawerOpen(false);
@@ -88,12 +99,15 @@ export function HostsPage() {
 
   const testMutation = useMutation({
     mutationFn: hostsApi.testSsh,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["hosts"] }),
         selectedHostId ? queryClient.invalidateQueries({ queryKey: queryKeys.host(selectedHostId) }) : Promise.resolve(),
         queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
       ]);
+      if (result.taskId) {
+        navigate(`/tasks/${result.taskId}`);
+      }
       setLatestActionText("已发起一次 SSH 连通性检测。");
       await message.success("SSH 测试已完成");
     },
@@ -122,7 +136,7 @@ export function HostsPage() {
       return [];
     }
     return (tasksQuery.data ?? [])
-      .filter((task) => task.resourceId === selectedHost.id || task.target.includes(selectedHost.id) || task.target.includes(selectedHost.name))
+      .filter((task) => taskMatchesResource(task, "host", selectedHost.id, [selectedHost.name, selectedHost.address]))
       .slice(0, 5);
   }, [selectedHost, tasksQuery.data]);
   const relatedAudits = useMemo(() => {
@@ -130,12 +144,29 @@ export function HostsPage() {
       return [];
     }
     return (auditsQuery.data ?? [])
-      .filter((audit) => {
-        const haystack = `${audit.resourceType} ${audit.resourceName} ${audit.summary}`.toLowerCase();
-        return haystack.includes(selectedHost.id.toLowerCase()) || haystack.includes(selectedHost.name.toLowerCase());
-      })
+      .filter((audit) => auditMatchesResource(audit, "host", selectedHost.id, [selectedHost.name, selectedHost.address]))
       .slice(0, 5);
   }, [auditsQuery.data, selectedHost]);
+  const hostAvailability = hostAvailabilityQuery.data ?? [];
+  const hostAlertEvents = useMemo(() => {
+    if (!selectedHost) {
+      return [];
+    }
+    return (alertEventsQuery.data ?? []).filter((item) => item.resourceType === "host" && item.resourceId === selectedHost.id);
+  }, [alertEventsQuery.data, selectedHost]);
+  const latestAvailability = hostAvailability[0] ?? null;
+  const latestHostAlert = hostAlertEvents[0] ?? null;
+  const latestOfflineCheck = hostAvailability.find((item) => item.status === "UNREACHABLE") ?? null;
+  const consecutiveFailureCount = useMemo(() => {
+    let count = 0;
+    for (const item of hostAvailability) {
+      if (item.status !== "UNREACHABLE") {
+        break;
+      }
+      count += 1;
+    }
+    return count;
+  }, [hostAvailability]);
   const primaryAction = selectedHost?.status === "HEALTHY" ? "terminal" : "test";
 
   if (hostsQuery.isError) {
@@ -147,7 +178,7 @@ export function HostsPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
           title="主机"
-          description="一期里主机页负责资产接入、SSH 测试和进入 WebSSH 终端。"
+          description="统一管理主机接入、SSH 检测与浏览器终端入口。"
           extra={
             <PermissionGuard permission="hosts.manage">
               <Button
@@ -203,7 +234,7 @@ export function HostsPage() {
                   emptyText: (
                     <EmptyState
                       title="还没有主机资产"
-                      description="先绑定 SSH 凭证，再把主机接入控制台。"
+                      description="绑定 SSH 凭证后，即可将主机接入控制台。"
                       action={
                         <Button type="primary" onClick={() => setDrawerOpen(true)}>
                           新增第一台主机
@@ -262,6 +293,22 @@ export function HostsPage() {
                       { label: "绑定凭证", value: selectedSecretName },
                       { label: "最近检测", value: selectedHost.lastCheckedAt ? formatDateTime(selectedHost.lastCheckedAt) : "--" },
                       {
+                        label: "最近可用性",
+                        value: latestAvailability ? <StatusBadge status={latestAvailability.status} /> : "--",
+                      },
+                      {
+                        label: "最近离线时间",
+                        value: latestOfflineCheck?.startedAt ? formatDateTime(latestOfflineCheck.startedAt) : "--",
+                      },
+                      {
+                        label: "最新告警状态",
+                        value: latestHostAlert ? <StatusBadge status={latestHostAlert.status} /> : "--",
+                      },
+                      {
+                        label: "连续失败次数",
+                        value: String(consecutiveFailureCount || 0),
+                      },
+                      {
                         label: "标签",
                         value: selectedHost.tags.length ? (
                           <Space wrap>
@@ -280,7 +327,7 @@ export function HostsPage() {
               actions={
                 selectedHost ? (
                   <Space wrap>
-                    <PermissionGuard permission="hosts.manage">
+                    <PermissionGuard permission="hosts.test">
                       <Button
                         type={primaryAction === "test" ? "primary" : "default"}
                         loading={testMutation.isPending}
@@ -325,10 +372,51 @@ export function HostsPage() {
                 </div>
               ) : null}
 
+              <div className="resource-detail-section">
+                <div className="page-toolbar">
+                  <Typography.Text strong>主机可用性记录</Typography.Text>
+                  <Typography.Text type="secondary">
+                    {hostAvailabilityQuery.isLoading ? "正在同步..." : `${hostAvailability.length} 条记录`}
+                  </Typography.Text>
+                </div>
+                <div className="resource-subpanel" style={{ marginTop: 12 }}>
+                  <DataTable
+                    rowKey="id"
+                    pagination={false}
+                    loading={hostAvailabilityQuery.isLoading}
+                    dataSource={hostAvailability.slice(0, 6)}
+                    locale={{ emptyText: "当前主机还没有可用性记录" }}
+                    columns={[
+                      { title: "状态", dataIndex: "status", render: (value: string) => <StatusBadge status={value} /> },
+                      {
+                        title: "开始时间",
+                        dataIndex: "startedAt",
+                        render: (value: string) => formatDateTime(value),
+                      },
+                      {
+                        title: "失败原因",
+                        dataIndex: "failureReason",
+                        render: (value?: string) => value || "--",
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+
               <ResourceActivityList
                 title="最近任务"
                 actionLabel={selectedHost ? "进入任务中心" : undefined}
-                onActionClick={selectedHost ? () => navigate("/tasks") : undefined}
+                onActionClick={
+                  selectedHost
+                    ? () =>
+                        navigate(
+                          buildTasksPath({
+                            resourceType: "host",
+                            resourceId: selectedHost.id,
+                          }),
+                        )
+                    : undefined
+                }
                 items={relatedTasks.map((task) => ({
                   key: task.id,
                   title: task.type,
@@ -342,7 +430,17 @@ export function HostsPage() {
               <ResourceActivityList
                 title="最近审计"
                 actionLabel={selectedHost ? "查看全部审计" : undefined}
-                onActionClick={selectedHost ? () => navigate("/audits") : undefined}
+                onActionClick={
+                  selectedHost
+                    ? () =>
+                        navigate(
+                          buildAuditsPath({
+                            resourceType: "host",
+                            resourceId: selectedHost.id,
+                          }),
+                        )
+                    : undefined
+                }
                 items={relatedAudits.map((audit) => ({
                   key: audit.id,
                   title: audit.action,
@@ -406,7 +504,7 @@ export function HostsPage() {
   );
 
   async function hostsToTerminal(hostId: string) {
-    const result = await import("../../lib/api").then(({ terminalApi }) => terminalApi.create(hostId));
+    const result = await terminalApi.create(hostId);
     return result.id;
   }
 }

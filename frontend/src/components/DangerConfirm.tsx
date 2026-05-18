@@ -49,7 +49,7 @@ export function DangerConfirm({
           type="warning"
           showIcon
           message="这是高风险操作"
-          description="一期 MVP 里，所有容器启停类动作都建议保留明确确认。"
+          description="为避免误操作，容器启停等高风险动作需要二次确认。"
         />
         <Typography.Paragraph style={{ marginBottom: 0 }}>{description}</Typography.Paragraph>
         {confirmText ? (

@@ -5,13 +5,12 @@ import {
   SafetyCertificateOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Avatar, Breadcrumb, Button, Dropdown, Layout, Menu, Space, Tag, Typography, App as AntApp } from "antd";
+import { Avatar, Breadcrumb, Button, Dropdown, Layout, Menu, Space, Typography, App as AntApp } from "antd";
 import type { MenuProps } from "antd";
 import { useMemo, useState } from "react";
 import { Link, Outlet, useLocation, useMatches, useNavigate } from "react-router-dom";
 import { authApi } from "../lib/api";
-import { USE_MOCK } from "../lib/config";
-import { filterNavItems, findFirstPath, navItems, type NavItem } from "../app/navigation";
+import { filterNavItems, navItems, type NavItem } from "../app/navigation";
 import { useSessionStore } from "../store/sessionStore";
 
 const { Header, Sider, Content } = Layout;
@@ -43,7 +42,6 @@ export function AppShell() {
   const visibleNavItems = useMemo(() => filterNavItems(navItems, permissions), [permissions]);
   const menuItems = useMemo(() => toMenuItems(visibleNavItems), [visibleNavItems]);
   const selectedKey = findSelectedKey(location.pathname, visibleNavItems);
-  const defaultTarget = findFirstPath(visibleNavItems) ?? "/dashboard";
 
   const breadcrumbItems = matches
     .filter((match) => (match.handle as { title?: string } | undefined)?.title)
@@ -80,7 +78,7 @@ export function AppShell() {
             <Space direction="vertical" size={0}>
               <Typography.Text strong>AegisOps</Typography.Text>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                MVP Frontend
+                运维控制台
               </Typography.Text>
             </Space>
           ) : null}
@@ -88,7 +86,7 @@ export function AppShell() {
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
-          defaultOpenKeys={["assets", "docker", "delivery", "system"]}
+          defaultOpenKeys={["assets", "docker", "delivery", "alerts", "settings", "system"]}
           items={menuItems}
         />
       </Sider>
@@ -112,8 +110,6 @@ export function AppShell() {
             <Breadcrumb items={breadcrumbItems} />
           </Space>
           <Space size={16}>
-            <Tag color={USE_MOCK ? "cyan" : "green"}>{USE_MOCK ? "Mock API" : "Real API"}</Tag>
-            <Tag>{defaultTarget}</Tag>
             <Dropdown menu={{ items: userMenu }} placement="bottomRight">
               <Space style={{ cursor: "pointer" }}>
                 <Avatar size="small" icon={<UserOutlined />} />

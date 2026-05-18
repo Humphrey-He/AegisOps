@@ -35,7 +35,7 @@ export function TerminalPage() {
     if (frameStatus === "DISCONNECTED") {
       parts.push("终端链路已断开，可尝试重连。");
     } else if (frameStatus === "CONNECTING") {
-      parts.push("正在建立 WebSocket 通道。");
+      parts.push("正在建立终端连接。");
     }
     return parts.join(" · ");
   }, [frameStatus, sessionId, sessionQuery.data]);
@@ -54,8 +54,8 @@ export function TerminalPage() {
     <PermissionGuard permission="terminal.open" forbiddenPage>
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <PageHeader
-          title="WebSSH 会话"
-          description="连接后端真实 WebSocket 流，并通过 xterm.js 进行交互。"
+          title="终端会话"
+          description="在浏览器中连接目标主机并执行命令。"
           extra={
             <Space wrap>
               {sessionQuery.data?.hostId ? (
