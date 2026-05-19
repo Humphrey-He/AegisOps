@@ -1496,6 +1496,149 @@ func TestHighRiskRoutesRequireDedicatedPermissions(t *testing.T) {
 	}
 }
 
+func TestTaskDispatchOperationsSmoke(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	adminToken := loginAndToken(t, router)
+	now := time.Now().UTC()
+	taskItem := model.Task{ID: "dispatch-task-1", Type: "scheduled.noop", Title: "Dispatch Task", Status: model.TaskStatusPending}
+	if err := database.Create(&taskItem).Error; err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	dispatch := model.TaskDispatch{
+		ID:             "dispatch-api-1",
+		TaskID:         taskItem.ID,
+		Source:         model.TaskDispatchSourceManual,
+		Status:         model.TaskDispatchStatusFailed,
+		RetryCount:     1,
+		MaxRetry:       2,
+		TimeoutSeconds: 60,
+		ConcurrencyKey: "dispatch:test",
+		QueuedAt:       now,
+	}
+	if err := database.Create(&dispatch).Error; err != nil {
+		t.Fatalf("seed dispatch: %v", err)
+	}
+
+	list := performRequest(router, http.MethodGet, "/api/task-dispatches?status=FAILED&source=MANUAL&taskId="+taskItem.ID+"&concurrencyKey=dispatch:test", nil, adminToken)
+	if list.Code != http.StatusOK {
+		t.Fatalf("GET /api/task-dispatches status = %d, want %d; body=%s", list.Code, http.StatusOK, list.Body.String())
+	}
+	var listPayload struct {
+		Data struct {
+			Items []model.TaskDispatch `json:"items"`
+			Total int64                `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode dispatch list: %v; body=%s", err, list.Body.String())
+	}
+	if listPayload.Data.Total != 1 || len(listPayload.Data.Items) != 1 || listPayload.Data.Items[0].ID != dispatch.ID {
+		t.Fatalf("unexpected dispatch list: %+v", listPayload.Data)
+	}
+	get := performRequest(router, http.MethodGet, "/api/task-dispatches/"+dispatch.ID, nil, adminToken)
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET /api/task-dispatches/:id status = %d, want %d; body=%s", get.Code, http.StatusOK, get.Body.String())
+	}
+	retry := performRequest(router, http.MethodPost, "/api/task-dispatches/"+dispatch.ID+"/retry", nil, adminToken)
+	if retry.Code != http.StatusOK {
+		t.Fatalf("POST /api/task-dispatches/:id/retry status = %d, want %d; body=%s", retry.Code, http.StatusOK, retry.Body.String())
+	}
+	var retried model.TaskDispatch
+	if err := database.First(&retried, "id = ?", dispatch.ID).Error; err != nil {
+		t.Fatalf("load retried dispatch: %v", err)
+	}
+	if retried.Status != model.TaskDispatchStatusPending || retried.LeaseOwner != "" || retried.FinishedAt != nil {
+		t.Fatalf("dispatch not retried: %+v", retried)
+	}
+	cancel := performRequest(router, http.MethodPost, "/api/task-dispatches/"+dispatch.ID+"/cancel", nil, adminToken)
+	if cancel.Code != http.StatusOK {
+		t.Fatalf("POST /api/task-dispatches/:id/cancel status = %d, want %d; body=%s", cancel.Code, http.StatusOK, cancel.Body.String())
+	}
+	var canceled model.TaskDispatch
+	if err := database.First(&canceled, "id = ?", dispatch.ID).Error; err != nil {
+		t.Fatalf("load canceled dispatch: %v", err)
+	}
+	if canceled.Status != model.TaskDispatchStatusCanceled || canceled.FinishedAt == nil {
+		t.Fatalf("dispatch not canceled: %+v", canceled)
+	}
+	var canceledTask model.Task
+	if err := database.First(&canceledTask, "id = ?", taskItem.ID).Error; err != nil {
+		t.Fatalf("load canceled task: %v", err)
+	}
+	if canceledTask.Status != model.TaskStatusCanceled {
+		t.Fatalf("task status = %s, want CANCELED", canceledTask.Status)
+	}
+}
+
+func TestTaskDispatchOperationsRequireDedicatedPermissions(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	adminToken := loginAndToken(t, router)
+	createUser := performRequest(router, http.MethodPost, "/api/users", []byte(`{
+		"username":"dispatchviewer",
+		"password":"plain123456",
+		"displayName":"Dispatch Viewer",
+		"status":"active"
+	}`), adminToken)
+	if createUser.Code != http.StatusCreated {
+		t.Fatalf("POST /api/users status = %d, want %d; body=%s", createUser.Code, http.StatusCreated, createUser.Body.String())
+	}
+	plainLogin := performRequest(router, http.MethodPost, "/api/auth/login", []byte(`{"username":"dispatchviewer","password":"plain123456"}`), "")
+	if plainLogin.Code != http.StatusOK {
+		t.Fatalf("plain login status = %d, want %d; body=%s", plainLogin.Code, http.StatusOK, plainLogin.Body.String())
+	}
+	var loginPayload struct {
+		Data struct {
+			Tokens struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(plainLogin.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	for _, target := range []string{
+		"/api/task-dispatches/dispatch-1/cancel",
+		"/api/task-dispatches/dispatch-1/retry",
+	} {
+		resp := performRequest(router, http.MethodPost, target, nil, loginPayload.Data.Tokens.AccessToken)
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("POST %s status = %d, want %d; body=%s", target, resp.Code, http.StatusForbidden, resp.Body.String())
+		}
+	}
+}
+
 func TestTerminalWebSocketRouteRequiresAuthAndSession(t *testing.T) {
 	t.Parallel()
 

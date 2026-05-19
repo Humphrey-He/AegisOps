@@ -178,6 +178,13 @@ func (w *Worker) retryDispatch(ctx context.Context, dispatch model.TaskDispatch,
 	w.service.writeMu.Lock()
 	defer w.service.writeMu.Unlock()
 	return w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var latest model.TaskDispatch
+		if err := tx.First(&latest, "id = ?", dispatch.ID).Error; err != nil {
+			return err
+		}
+		if latest.Status == model.TaskDispatchStatusCanceled {
+			return nil
+		}
 		if err := tx.Model(&model.TaskDispatch{}).Where("id = ?", dispatch.ID).Updates(map[string]any{
 			"status":           model.TaskDispatchStatusPending,
 			"retry_count":      dispatch.RetryCount + 1,
@@ -201,6 +208,13 @@ func (w *Worker) finishDispatch(ctx context.Context, taskID string, dispatch mod
 	w.service.writeMu.Lock()
 	defer w.service.writeMu.Unlock()
 	return w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var latest model.TaskDispatch
+		if err := tx.First(&latest, "id = ?", dispatch.ID).Error; err != nil {
+			return err
+		}
+		if latest.Status == model.TaskDispatchStatusCanceled {
+			return nil
+		}
 		if err := tx.Model(&model.TaskDispatch{}).Where("id = ?", dispatch.ID).Updates(map[string]any{
 			"status":           dispatchStatus,
 			"lease_owner":      "",

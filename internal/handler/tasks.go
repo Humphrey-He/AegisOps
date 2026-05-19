@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/Humphrey-He/AegisOps/internal/audit"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/rbac"
 	"github.com/Humphrey-He/AegisOps/internal/task"
@@ -14,10 +15,15 @@ import (
 type TaskHandler struct {
 	service *task.Service
 	db      *gorm.DB
+	audit   *audit.Service
 }
 
 func NewTaskHandler(service *task.Service, db *gorm.DB) *TaskHandler {
 	return &TaskHandler{service: service, db: db}
+}
+
+func NewTaskHandlerWithAudit(service *task.Service, db *gorm.DB, auditService *audit.Service) *TaskHandler {
+	return &TaskHandler{service: service, db: db, audit: auditService}
 }
 
 type TaskContext struct {
@@ -41,6 +47,10 @@ func (h *TaskHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service) {
 	r.POST("/tasks/:id/logs", rbac.RequirePermission(rbacService, "tasks.dispatch"), h.AddLog)
 	r.POST("/tasks/:id/cancel", rbac.RequirePermission(rbacService, "tasks.cancel"), h.Cancel)
 	r.POST("/tasks/:id/retry", rbac.RequirePermission(rbacService, "tasks.retry"), h.Retry)
+	r.GET("/task-dispatches", rbac.RequirePermission(rbacService, "tasks.view"), h.ListDispatches)
+	r.GET("/task-dispatches/:id", rbac.RequirePermission(rbacService, "tasks.view"), h.GetDispatch)
+	r.POST("/task-dispatches/:id/cancel", rbac.RequirePermission(rbacService, "tasks.cancel"), h.CancelDispatch)
+	r.POST("/task-dispatches/:id/retry", rbac.RequirePermission(rbacService, "tasks.retry"), h.RetryDispatch)
 }
 
 func (h *TaskHandler) List(c *gin.Context) {
@@ -197,6 +207,64 @@ func (h *TaskHandler) Retry(c *gin.Context) {
 		return
 	}
 	Created(c, item)
+}
+
+func (h *TaskHandler) ListDispatches(c *gin.Context) {
+	limit, offset := Pagination(c)
+	items, total, err := h.service.ListDispatches(c.Request.Context(), task.DispatchFilter{
+		Status:         c.Query("status"),
+		Source:         c.Query("source"),
+		JobID:          c.Query("jobId"),
+		TaskID:         c.Query("taskId"),
+		ConcurrencyKey: c.Query("concurrencyKey"),
+	}, limit, offset)
+	if err != nil {
+		Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	OK(c, PageResult{Items: items, Total: total, Limit: limit, Offset: offset})
+}
+
+func (h *TaskHandler) GetDispatch(c *gin.Context) {
+	item, err := h.service.GetDispatch(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusNotFound, err.Error())
+		return
+	}
+	OK(c, item)
+}
+
+func (h *TaskHandler) CancelDispatch(c *gin.Context) {
+	item, err := h.service.CancelDispatch(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.recordDispatchAudit(c, "task_dispatch.cancel", item.ID, model.AuditResultSuccess, "")
+	OK(c, item)
+}
+
+func (h *TaskHandler) RetryDispatch(c *gin.Context) {
+	item, err := h.service.RetryDispatch(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.recordDispatchAudit(c, "task_dispatch.retry", item.ID, model.AuditResultSuccess, "")
+	OK(c, item)
+}
+
+func (h *TaskHandler) recordDispatchAudit(c *gin.Context, action, resourceID string, result model.AuditResult, message string) {
+	if h.audit == nil {
+		return
+	}
+	_ = h.audit.RecordGin(c, audit.Entry{
+		Action:       action,
+		ResourceType: "task_dispatch",
+		ResourceID:   resourceID,
+		Result:       result,
+		Message:      message,
+	})
 }
 
 func failedStepError(item *model.Task) string {

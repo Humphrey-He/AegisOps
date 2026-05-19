@@ -38,6 +38,14 @@ type ListFilter struct {
 	TargetID   string
 }
 
+type DispatchFilter struct {
+	Status         string
+	Source         string
+	JobID          string
+	TaskID         string
+	ConcurrencyKey string
+}
+
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
@@ -139,6 +147,43 @@ func (s *Service) Get(ctx context.Context, id string) (*model.Task, error) {
 	return &item, nil
 }
 
+func (s *Service) ListDispatches(ctx context.Context, filter DispatchFilter, limit, offset int) ([]model.TaskDispatch, int64, error) {
+	var items []model.TaskDispatch
+	var total int64
+	query := s.db.WithContext(ctx).Model(&model.TaskDispatch{})
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.Source != "" {
+		query = query.Where("source = ?", filter.Source)
+	}
+	if filter.JobID != "" {
+		query = query.Where("job_id = ?", filter.JobID)
+	}
+	if filter.TaskID != "" {
+		query = query.Where("task_id = ?", filter.TaskID)
+	}
+	if filter.ConcurrencyKey != "" {
+		query = query.Where("concurrency_key = ?", filter.ConcurrencyKey)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	err := query.Order("queued_at DESC, created_at DESC").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
+}
+
+func (s *Service) GetDispatch(ctx context.Context, id string) (*model.TaskDispatch, error) {
+	var item model.TaskDispatch
+	if err := s.db.WithContext(ctx).First(&item, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (s *Service) Start(ctx context.Context, id string) error {
 	now := time.Now().UTC()
 	s.writeMu.Lock()
@@ -159,6 +204,77 @@ func (s *Service) Finish(ctx context.Context, id string, status model.TaskStatus
 		"error":       errMessage,
 		"finished_at": &now,
 	}).Error
+}
+
+func (s *Service) CancelDispatch(ctx context.Context, id string) (*model.TaskDispatch, error) {
+	now := time.Now().UTC()
+	var dispatch model.TaskDispatch
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&dispatch, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if isDispatchTerminal(dispatch.Status) {
+			return fmt.Errorf("dispatch is already finished")
+		}
+		if err := tx.Model(&model.TaskDispatch{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":           model.TaskDispatchStatusCanceled,
+			"lease_owner":      "",
+			"lease_expires_at": nil,
+			"finished_at":      &now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Task{}).Where("id = ? AND status IN ?", dispatch.TaskID, []model.TaskStatus{
+			model.TaskStatusPending,
+			model.TaskStatusRunning,
+		}).Updates(map[string]interface{}{
+			"status":      model.TaskStatusCanceled,
+			"error":       "dispatch canceled by user",
+			"finished_at": &now,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetDispatch(ctx, id)
+}
+
+func (s *Service) RetryDispatch(ctx context.Context, id string) (*model.TaskDispatch, error) {
+	now := time.Now().UTC()
+	var dispatch model.TaskDispatch
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&dispatch, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if dispatch.Status != model.TaskDispatchStatusFailed &&
+			dispatch.Status != model.TaskDispatchStatusTimeout &&
+			dispatch.Status != model.TaskDispatchStatusCanceled {
+			return fmt.Errorf("only failed, timeout or canceled dispatch can be retried")
+		}
+		if err := tx.Model(&model.TaskDispatch{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":           model.TaskDispatchStatusPending,
+			"lease_owner":      "",
+			"lease_expires_at": nil,
+			"queued_at":        now,
+			"started_at":       nil,
+			"finished_at":      nil,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Task{}).Where("id = ?", dispatch.TaskID).Updates(map[string]interface{}{
+			"status":      model.TaskStatusPending,
+			"error":       "",
+			"finished_at": nil,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetDispatch(ctx, id)
 }
 
 func (s *Service) Cancel(ctx context.Context, id string) error {
@@ -190,6 +306,13 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 		}).Error
 		return nil
 	})
+}
+
+func isDispatchTerminal(status model.TaskDispatchStatus) bool {
+	return status == model.TaskDispatchStatusSuccess ||
+		status == model.TaskDispatchStatusFailed ||
+		status == model.TaskDispatchStatusCanceled ||
+		status == model.TaskDispatchStatusTimeout
 }
 
 func (s *Service) Retry(ctx context.Context, id, operatorID string) (*model.Task, error) {

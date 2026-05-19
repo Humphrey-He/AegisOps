@@ -185,6 +185,57 @@ func TestWorkerRunStopsOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestWorkerDoesNotOverwriteCanceledDispatch(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newWorkerTestService(t)
+	defer cleanup()
+	task, dispatch := seedWorkerDispatch(t, service, "scheduled.noop", model.TaskDispatchStatusPending, 0, 0, 60)
+
+	executorStarted := make(chan struct{})
+	allowFinish := make(chan struct{})
+	workerDone := make(chan error, 1)
+	worker := NewWorker(service)
+	go func() {
+		_, err := worker.RunOnce(context.Background(), WorkerOptions{
+			Owner: "test-worker",
+			Executor: func(context.Context, model.Task, model.TaskDispatch) (string, error) {
+				close(executorStarted)
+				<-allowFinish
+				return "should not overwrite cancel", nil
+			},
+		})
+		workerDone <- err
+	}()
+
+	select {
+	case <-executorStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for executor start")
+	}
+	if _, err := service.CancelDispatch(context.Background(), dispatch.ID); err != nil {
+		t.Fatalf("CancelDispatch: %v", err)
+	}
+	close(allowFinish)
+	if err := <-workerDone; err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	var updatedDispatch model.TaskDispatch
+	if err := service.db.First(&updatedDispatch, "id = ?", dispatch.ID).Error; err != nil {
+		t.Fatalf("load dispatch: %v", err)
+	}
+	if updatedDispatch.Status != model.TaskDispatchStatusCanceled {
+		t.Fatalf("dispatch status = %s, want CANCELED", updatedDispatch.Status)
+	}
+	var updatedTask model.Task
+	if err := service.db.First(&updatedTask, "id = ?", task.ID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	if updatedTask.Status != model.TaskStatusCanceled {
+		t.Fatalf("task status = %s, want CANCELED", updatedTask.Status)
+	}
+}
+
 func newWorkerTestService(t *testing.T) (*Service, func()) {
 	t.Helper()
 	database, err := db.Open(config.DatabaseConfig{

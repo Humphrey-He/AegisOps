@@ -119,7 +119,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	dashboardHandler := handler.NewDashboardHandler(database)
 	secretHandler := handler.NewSecretHandler(secretService, auditService)
 	hostHandler := handler.NewHostHandler(hostService, auditService)
-	taskHandler := handler.NewTaskHandler(taskService, database)
+	taskHandler := handler.NewTaskHandlerWithAudit(taskService, database, auditService)
 	dockerHandler := handler.NewDockerHandler(dockerService, auditService)
 	environmentHandler := handler.NewEnvironmentHandler(environmentService, auditService)
 	terminalHandler := handler.NewTerminalHandler(terminalService)
