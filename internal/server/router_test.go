@@ -1,9 +1,11 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1151,6 +1153,81 @@ func TestUnmaskedExportBackupRequiresDedicatedPermissions(t *testing.T) {
 	limitedBackupDownload := performRequest(router, http.MethodGet, "/api/backups/"+backupID+"/download", nil, limitedToken)
 	if limitedBackupDownload.Code != http.StatusForbidden {
 		t.Fatalf("GET unmasked backup download limited status = %d, want %d; body=%s", limitedBackupDownload.Code, http.StatusForbidden, limitedBackupDownload.Body.String())
+	}
+}
+
+func TestBackupManifestUsesPostgresPlaceholderWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	cfg.Database.Driver = "postgres"
+	cfg.Database.DSN = "postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable"
+
+	database, err := db.Open(config.DatabaseConfig{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "aegisops.db"),
+	})
+	if err != nil {
+		t.Fatalf("open sqlite database for test isolation: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	backup := performRequest(router, http.MethodPost, "/api/backups", []byte(`{"masked":true}`), token)
+	if backup.Code != http.StatusCreated {
+		t.Fatalf("POST /api/backups status = %d, want %d; body=%s", backup.Code, http.StatusCreated, backup.Body.String())
+	}
+	backupID := decodeID(t, backup.Body.Bytes())
+
+	download := performRequest(router, http.MethodGet, "/api/backups/"+backupID+"/download", nil, token)
+	if download.Code != http.StatusOK {
+		t.Fatalf("GET /api/backups/:id/download status = %d, want %d; body=%s", download.Code, http.StatusOK, download.Body.String())
+	}
+
+	readerAt := bytes.NewReader(download.Body.Bytes())
+	zipReader, err := zip.NewReader(readerAt, int64(readerAt.Len()))
+	if err != nil {
+		t.Fatalf("open backup zip: %v", err)
+	}
+
+	var hasPlaceholder bool
+	var manifestBody string
+	for _, file := range zipReader.File {
+		if file.Name == "postgresql-backup.placeholder.txt" {
+			hasPlaceholder = true
+		}
+		if file.Name != "manifest.json" {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("open manifest.json: %v", err)
+		}
+		body, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read manifest.json: %v", err)
+		}
+		manifestBody = string(body)
+	}
+
+	if !hasPlaceholder {
+		t.Fatal("backup zip did not include postgresql-backup.placeholder.txt")
+	}
+	if bytes.Contains([]byte(manifestBody), []byte("backup.db")) {
+		t.Fatalf("manifest.json unexpectedly references backup.db: %s", manifestBody)
+	}
+	if !bytes.Contains([]byte(manifestBody), []byte("postgresql-backup.placeholder.txt")) {
+		t.Fatalf("manifest.json did not reference postgres placeholder: %s", manifestBody)
 	}
 }
 

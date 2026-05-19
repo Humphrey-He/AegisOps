@@ -100,6 +100,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	nginxService := nginxsvc.NewService(database, secretService, taskService)
 	nginxService.SetAlertService(alertService)
 	exportService := exportsvc.NewService(database, exportsvc.Options{
+		DBDriver: cfg.Database.Driver,
 		DBDSN:   cfg.Database.DSN,
 		AppName: cfg.App.Name,
 		AppEnv:  cfg.App.Env,

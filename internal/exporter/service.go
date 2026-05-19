@@ -33,6 +33,7 @@ type Service struct {
 	db        *gorm.DB
 	baseDir   string
 	backupDir string
+	dbDriver  string
 	dbDSN     string
 	appName   string
 	appEnv    string
@@ -41,6 +42,7 @@ type Service struct {
 type Options struct {
 	BaseDir   string
 	BackupDir string
+	DBDriver  string
 	DBDSN     string
 	AppName   string
 	AppEnv    string
@@ -98,6 +100,7 @@ func NewService(db *gorm.DB, opts Options) *Service {
 		db:        db,
 		baseDir:   baseDir,
 		backupDir: backupDir,
+		dbDriver:  normalizeDriver(opts.DBDriver),
 		dbDSN:     opts.DBDSN,
 		appName:   firstNonEmpty(opts.AppName, "aegisops"),
 		appEnv:    opts.AppEnv,
@@ -267,7 +270,8 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*model.B
 	}
 	fileName := safeFileName("backup-" + timestamp() + ".zip")
 	path := filepath.Join(s.backupDir, fileName)
-	manifestValue := s.newManifest(record.ID, "backup", masked, []string{"backup.db", "config-snapshot.json", "manifest.json", "restore-guide.md"}, nil)
+	backupFiles := s.backupManifestFiles()
+	manifestValue := s.newManifest(record.ID, "backup", masked, append(append([]string{}, backupFiles...), "config-snapshot.json", "manifest.json", "restore-guide.md"), nil)
 	files := map[string][]byte{}
 	dbFiles, err := s.databaseFiles()
 	if err != nil {
@@ -578,6 +582,10 @@ func (s *Service) configSnapshot(ctx context.Context, masked bool) any {
 
 func (s *Service) databaseFiles() (map[string][]byte, error) {
 	files := map[string][]byte{}
+	if s.databaseDriver() != "sqlite" {
+		files["postgresql-backup.placeholder.txt"] = []byte("PostgreSQL-first mode is enabled. This backup package currently includes configuration snapshots and troubleshooting context only. Use pg_dump or storage snapshots for full PostgreSQL backups.\n")
+		return files, nil
+	}
 	path := sqlitePath(s.dbDSN)
 	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
 		files["backup.db"] = []byte{}
@@ -596,6 +604,13 @@ func (s *Service) databaseFiles() (map[string][]byte, error) {
 		}
 	}
 	return files, nil
+}
+
+func (s *Service) backupManifestFiles() []string {
+	if s.databaseDriver() == "sqlite" {
+		return []string{"backup.db"}
+	}
+	return []string{"postgresql-backup.placeholder.txt"}
 }
 
 func (s *Service) newManifest(id, itemType string, masked bool, files []string, resource map[string]any) manifest {
@@ -709,10 +724,31 @@ func taskLogsText(taskValue any) string {
 }
 
 func (s *Service) restoreGuide() string {
-	if sqlitePath(s.dbDSN) == "" {
-		return "# AegisOps 恢复说明\n\n1. 停止 AegisOps 后端服务。\n2. 对当前 PostgreSQL 实例执行逻辑备份或快照备份。\n3. 使用备份包中的配置快照、资源记录和事件记录辅助恢复。\n4. 恢复数据库后启动后端服务并检查 `/healthz`。\n\n当前备份包主要提供配置与排障上下文，不直接导出 PostgreSQL 全量数据文件。\n"
+	if s.databaseDriver() == "postgres" {
+		return "# AegisOps 恢复说明\n\n1. 停止 AegisOps 后端服务。\n2. 对当前 PostgreSQL 实例执行 `pg_dump`、物理备份或存储快照备份。\n3. 使用备份包中的配置快照、资源记录和事件记录辅助排障与恢复校验。\n4. 先恢复 PostgreSQL 数据，再启动后端服务并检查 `/healthz`。\n\n当前应用内备份包主要提供配置与排障上下文，不直接导出 PostgreSQL 全量数据文件。\n"
 	}
 	return "# AegisOps 恢复说明\n\n1. 停止 AegisOps 后端服务。\n2. 备份当前数据库文件。\n3. 将备份包中的 `backup.db` 放回 SQLite 数据库路径。\n4. 启动后端服务并检查 `/healthz`。\n\n本期提供备份包和恢复预案，不执行自动恢复。\n"
+}
+
+func (s *Service) databaseDriver() string {
+	if s.dbDriver != "" {
+		return s.dbDriver
+	}
+	if s.db != nil && s.db.Dialector != nil {
+		return normalizeDriver(s.db.Dialector.Name())
+	}
+	return normalizeDriver("")
+}
+
+func normalizeDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "sqlite":
+		return "sqlite"
+	case "", "postgres", "postgresql":
+		return "postgres"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
 }
 
 func sqlitePath(dsn string) string {
