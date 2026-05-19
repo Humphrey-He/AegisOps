@@ -15,7 +15,9 @@ import (
 )
 
 func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	if cfg.Driver == "" || cfg.Driver == "sqlite" {
+	driver := normalizeDriver(cfg.Driver)
+
+	if driver == "sqlite" {
 		if err := ensureSQLiteDir(cfg.DSN); err != nil {
 			return nil, err
 		}
@@ -45,7 +47,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return database, nil
 	}
 
-	if cfg.Driver == "postgres" || cfg.Driver == "postgresql" {
+	if driver == "postgres" {
 		database, err := gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{})
 		if err != nil {
 			return nil, err
@@ -61,6 +63,17 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return database, nil
 	}
 	return nil, ErrUnsupportedDriver
+}
+
+func normalizeDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "", "postgres", "postgresql":
+		return "postgres"
+	case "sqlite":
+		return "sqlite"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
 }
 
 func AutoMigrate(database *gorm.DB) error {

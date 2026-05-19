@@ -51,3 +51,22 @@ func TestOpenConfiguresSQLitePragmas(t *testing.T) {
 		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
 }
+
+func TestNormalizeDriver(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"":            "postgres",
+		"postgres":    "postgres",
+		"PostgreSQL":  "postgres",
+		" sqlite ":    "sqlite",
+		"mysql":       "mysql",
+		" unsupported ": "unsupported",
+	}
+
+	for input, want := range cases {
+		if got := normalizeDriver(input); got != want {
+			t.Fatalf("normalizeDriver(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

@@ -49,24 +49,7 @@ type NotificationConfig struct {
 }
 
 func Load() (*Config, error) {
-	v := viper.New()
-	v.SetConfigName("config")
-	v.SetConfigType("yaml")
-	v.AddConfigPath("./configs")
-	v.AddConfigPath(".")
-	v.SetEnvPrefix("AEGISOPS")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	v.SetDefault("app.name", "aegisops")
-	v.SetDefault("app.env", "dev")
-	v.SetDefault("http.addr", ":8080")
-	v.SetDefault("database.driver", "sqlite")
-	v.SetDefault("database.dsn", "data/aegisops.db")
-	v.SetDefault("security.access_token_ttl", "2h")
-	v.SetDefault("security.refresh_token_ttl", "168h")
-	v.SetDefault("notification.template_version", "v2")
-	v.SetDefault("notification.public_base_url", "http://localhost:4173")
+	v := newViper()
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -79,4 +62,27 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func newViper() *viper.Viper {
+	v := viper.New()
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath("./configs")
+	v.AddConfigPath(".")
+	v.SetEnvPrefix("AEGISOPS")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	v.SetDefault("app.name", "aegisops")
+	v.SetDefault("app.env", "dev")
+	v.SetDefault("http.addr", ":8080")
+	v.SetDefault("database.driver", "postgres")
+	v.SetDefault("database.dsn", "postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable")
+	v.SetDefault("security.access_token_ttl", "2h")
+	v.SetDefault("security.refresh_token_ttl", "168h")
+	v.SetDefault("notification.template_version", "v2")
+	v.SetDefault("notification.public_base_url", "http://localhost:4173")
+
+	return v
 }

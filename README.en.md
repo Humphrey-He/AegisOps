@@ -2,39 +2,120 @@
 
 [中文](./README.md) | [日本語](./README.ja-JP.md) | [English](./README.en.md)
 
-AegisOps is a DevOps platform focused on a lightweight operations control plane, delivery workflows, and stability management. The repository currently includes:
+`AegisOps` is a DevOps platform focused on a lightweight operations control plane, application delivery, and stability management.
 
-- a Go + Gin + SQLite + GORM + zap backend API and task execution core
-- a React + TypeScript + Vite frontend console
-- Chinese-first product, development, review, phase-two, and release documents
+The latest formal release in this repository is `v1.0.0`. At this stage, the project is no longer a scaffold. It already provides a runnable phase-one baseline with real backend APIs, a usable frontend console, local demo data, and clear phase-two planning.
 
-GitHub should display the Chinese `README.md` by default. This file is the English counterpart.
+## Positioning
 
-## Project Overview
+AegisOps is a strong fit for:
 
-Based on the current implementation, AegisOps already provides a runnable local operations platform baseline:
+- a personal operations platform
+- a small-team internal operations console
+- a backend/platform engineering interview project
+- a product prototype for a DevOps control plane
 
-- identity and access: admin bootstrap, authentication, users, roles, RBAC, and audit logs
-- assets and secrets: host management, SSH connectivity tests, encrypted secret storage, and masked responses
-- operations execution: tasks, task steps, task logs, and a web terminal
-- container and delivery workflows: Docker nodes, image registries, service definitions, release, upgrade, and rollback
-- stability management: notification channels, alert rules, alert events, and host/service health checks
-- release loop features: post-release probing, rollback suggestions, and Nginx node/config rollback support
-- platform support: export, backup, scheduler APIs, and demo data seeding in development environments
+It currently fits best as a single-node or lightweight platform baseline rather than a large-scale multi-tenant SaaS product.
 
-The frontend console already includes major pages for dashboard, hosts, secrets, Docker, Nginx, registries, services, tasks, audits, alerts, notifications, users, roles, terminal, login, and admin setup.
+## Project Assessment
+
+The project has several clear strengths:
+
+- clear domain focus around hosts, secrets, Docker, registries, service delivery, Nginx, tasks, alerts, notifications, and audits
+- strong backend completeness beyond CRUD, including RBAC, audit trails, release flows, health checks, export/backup, and scheduler APIs
+- a frontend that already acts as a real console rather than a placeholder shell
+- rich documentation covering product thinking, development experience, review checkpoints, phase-two planning, and release acceptance
+- easy local adoption with PostgreSQL as the primary runtime database, while still keeping SQLite as an optional lightweight mode
+
+Current boundaries should also be stated honestly:
+
+- the default deployment model is still oriented toward local or single-node use
+- export and backup are currently stronger on the backend/API side than on unified frontend workflows
+- fine-grained permission evolution, secret lifecycle management, advanced scheduling, and real external notification integrations still belong to the next stage
+- more long-running verification against real hosts, Docker, Nginx, and notification targets is still worthwhile for heavier production use
+
+In short: this is a solid `v1.0.0` backend-driven DevOps control-plane project with good product direction and a credible extension path.
+
+## What v1.0.0 Includes
+
+### Backend capabilities
+
+- identity and access
+  - admin bootstrap
+  - authentication
+  - users and roles
+  - RBAC
+  - audit logs
+- assets and secrets
+  - host management
+  - SSH connectivity tests
+  - encrypted secret storage with masked responses
+- operations execution
+  - task center
+  - task steps and logs
+  - web terminal
+- delivery workflows
+  - Docker node management
+  - image registry management
+  - service definitions
+  - release, upgrade, and rollback
+  - post-release health probing and rollback suggestions
+- stability management
+  - notification channels
+  - alert rules
+  - alert events
+  - host and service health checks
+  - Nginx node and config publish/rollback flows
+- platform support
+  - export APIs
+  - backup APIs
+  - scheduler APIs
+  - demo data seeding
+  - PostgreSQL-first support with SQLite as an optional lightweight mode
+
+### Frontend pages already implemented
+
+- dashboard
+- asset management
+  - hosts
+  - secrets
+- runtime resources
+  - Docker nodes
+  - Nginx nodes
+- application delivery
+  - registries
+  - services
+- task list and task detail
+- alert events
+- notification channels
+- alert rules
+- audit log
+- system management
+  - users
+  - roles
+  - scheduled jobs
+- login
+- admin setup
+- web terminal
+
+Notes:
+
+- the frontend already runs against the real backend by default in development
+- export and backup are currently more complete as backend/API capabilities than as dedicated frontend management pages
 
 ## Directory Layout
 
 ```text
 cmd/         backend entrypoint
 configs/     configuration files
-data/        SQLite data and local runtime artifacts
+data/        local runtime artifacts and optional SQLite files
+deploy/      deployment and smoke-test resources
 docs/        Chinese project documents and plans
 frontend/    frontend console
 internal/    backend business implementation
 logs/        local runtime logs
 pkg/         shared packages
+scripts/     local helper scripts
 ```
 
 ## Backend Quick Start
@@ -42,7 +123,7 @@ pkg/         shared packages
 Requirements:
 
 - Go 1.24+
-- Windows, Linux, or macOS
+- Windows / Linux / macOS
 
 Run the backend:
 
@@ -59,9 +140,10 @@ Default listen address:
 
 - `:8080`
 
-Default SQLite database:
+Default database:
 
-- `data/aegisops.db`
+- PostgreSQL: `postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable`
+- Optional SQLite example config: `configs/config.sqlite.example.yaml`
 
 Default administrator:
 
@@ -70,9 +152,7 @@ username: admin
 password: admin123456
 ```
 
-Change the default administrator password, JWT secret, and secret key before using the service beyond local development.
-
-When `app.env` is `dev`, `development`, or `test`, the backend seeds demo registry, Docker node, service, and instance data for local walkthroughs of release, rollback, and health-check flows.
+These defaults are only for local development and demos. Replace the administrator password, JWT secret, secret key, and PostgreSQL password before using the service beyond local use.
 
 ## Frontend Quick Start
 
@@ -93,9 +173,9 @@ Default URL:
 
 - [http://localhost:4173](http://localhost:4173)
 
-In development mode, the frontend uses the real backend by default and proxies `/api` to `http://127.0.0.1:8080`.
+In development, the frontend uses the real backend by default and proxies `/api` to `http://127.0.0.1:8080`.
 
-For a production-style preview:
+Production-style preview:
 
 ```powershell
 Set-Location frontend
@@ -105,7 +185,7 @@ npm run preview
 
 ## Smoke Checks
 
-Backend health checks:
+Health endpoints:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/healthz
@@ -124,7 +204,7 @@ $login = Invoke-RestMethod `
 $login.data.tokens.accessToken
 ```
 
-Current user:
+Get the current user:
 
 ```powershell
 $token = $login.data.tokens.accessToken
@@ -133,7 +213,7 @@ Invoke-RestMethod `
   -Headers @{ Authorization = "Bearer $token" }
 ```
 
-## Tests and Acceptance
+## Tests and Release Baseline
 
 Run backend tests:
 
@@ -149,38 +229,50 @@ Set-Location frontend
 npm run build
 ```
 
-Treat both checks as the minimum validation before each commit. For formal release acceptance, use [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md).
+Both checks should be treated as the minimum pre-commit validation.
+
+For formal release acceptance, see:
+
+- [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md)
 
 ## Environment Overrides
 
-Backend settings can be overridden with `AEGISOPS_` environment variables:
+Backend settings can be overridden with `AEGISOPS_` environment variables, for example:
 
 ```powershell
 $env:AEGISOPS_HTTP_ADDR = ":18080"
-$env:AEGISOPS_DATABASE_DSN = "data/dev.db"
+$env:AEGISOPS_DATABASE_DRIVER = "postgres"
+$env:AEGISOPS_DATABASE_DSN = "postgres://aegisops:replace-me@127.0.0.1:5432/aegisops?sslmode=disable"
 $env:AEGISOPS_SECURITY_JWT_SECRET = "replace-me"
 $env:AEGISOPS_ADMIN_PASSWORD = "replace-me-too"
+```
+
+Local PostgreSQL quick start:
+
+```powershell
+docker compose -f deploy/postgres/docker-compose.yaml up -d
 ```
 
 ## Documentation
 
 Recommended core documents:
 
-- [AegisOps Phase-One MVP Roadmap](./docs/AegisOps一期MVP开发路线.md)
-- [AegisOps Phase-One Development Handbook](./docs/AegisOps一期开发手册（真实经验与排查方法）.md)
-- [AegisOps Stage Review (Phase-One Completion and Phase-Two Recommendations)](./docs/AegisOps阶段审查报告（一期完成度与二期建议）.md)
-- [AegisOps Formal Release Acceptance Checklist](./docs/AegisOps正式Release验收清单.md)
-- [AegisOps Phase-Two Frontend and Backend Roadmap](./docs/AegisOps二期前后端开发路线.md)
-- [AegisOps Phase-Two Plan: Alerts and Health-Check Loop](./docs/AegisOps二期专项规划：通知告警与健康检查闭环.md)
-- [AegisOps Phase-Two Plan: Export, Backup, and Troubleshooting Pack](./docs/AegisOps二期专项规划：导出、备份与故障排查包.md)
-- [AegisOps Phase-Two Plan: Fine-Grained Permissions, Secret Management, and Scheduling](./docs/AegisOps二期专项规划：权限细粒度、密钥管理与任务调度.md)
+- [AegisOps产品定位与目标用户分析](./docs/AegisOps产品定位与目标用户分析.md)
+- [AegisOps产品未来演进方向分析](./docs/AegisOps产品未来演进方向分析.md)
+- [AegisOps一期MVP开发路线](./docs/AegisOps一期MVP开发路线.md)
+- [AegisOps一期开发手册（真实经验与排查方法）](./docs/AegisOps一期开发手册（真实经验与排查方法）.md)
+- [AegisOps阶段审查报告（一期完成度与二期建议）](./docs/AegisOps阶段审查报告（一期完成度与二期建议）.md)
+- [AegisOps UIUX视觉与易用性专业优化方案](./docs/AegisOps%20UIUX视觉与易用性专业优化方案.md)
+- [AegisOps二期前后端开发路线](./docs/AegisOps二期前后端开发路线.md)
+- [AegisOps二期专项规划：通知告警与健康检查闭环](./docs/AegisOps二期专项规划：通知告警与健康检查闭环.md)
+- [AegisOps二期专项规划：导出、备份与故障排查包](./docs/AegisOps二期专项规划：导出、备份与故障排查包.md)
+- [AegisOps二期专项规划：权限细粒度、密钥管理与任务调度](./docs/AegisOps二期专项规划：权限细粒度、密钥管理与任务调度.md)
+- [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md)
 
 ## Current Stage
 
-This repository is no longer just a scaffold. Backend APIs, frontend business pages, demo data, and the basic integration loop are already in place, so local development, demos, and API integration can proceed directly.
+The repository can now be described as:
 
-Its current status is better described as:
-
-- phase-one core capabilities mostly complete
-- phase-one closure, production readiness checks, and several focused enhancements are still ongoing
-- formal release readiness should be judged against [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md)
+- a completed `v1.0.0` formal release baseline
+- ready for local execution, demos, API integration, and phase-two development
+- moving from phase-one scaffolding and closure into production hardening and focused phase-two enhancements
