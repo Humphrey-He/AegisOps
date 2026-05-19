@@ -11,6 +11,7 @@ import (
 
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
+	hostsvc "github.com/Humphrey-He/AegisOps/internal/host"
 	"github.com/Humphrey-He/AegisOps/internal/logger"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	registrysvc "github.com/Humphrey-He/AegisOps/internal/registry"
@@ -49,6 +50,7 @@ func main() {
 	if err != nil {
 		log.Fatal("initialize secret service", zap.Error(err))
 	}
+	hostService := hostsvc.NewService(database, secretService)
 	registryService := registrysvc.NewService(database, secretService)
 	taskService := tasksvc.NewService(database)
 	dispatchWorker := tasksvc.NewWorker(taskService)
@@ -68,7 +70,7 @@ func main() {
 		Interval: time.Minute,
 		Limit:    20,
 		Owner:    "aegisops-api",
-		Executor: tasksvc.NewDispatchExecutor(registryService),
+		Executor: tasksvc.NewDispatchExecutor(registryService, hostService),
 		OnError: func(err error) {
 			log.Warn("task dispatch worker failed", zap.Error(err))
 		},

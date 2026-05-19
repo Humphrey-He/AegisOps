@@ -12,9 +12,24 @@ type RegistryTester interface {
 	Test(context.Context, string) error
 }
 
-func NewDispatchExecutor(registryTester RegistryTester) DispatchExecutor {
+type HostTester interface {
+	TestSSH(context.Context, string) error
+}
+
+func NewDispatchExecutor(registryTester RegistryTester, hostTester HostTester) DispatchExecutor {
 	return func(ctx context.Context, task model.Task, dispatch model.TaskDispatch) (string, error) {
 		switch strings.TrimSpace(strings.ToLower(task.Type)) {
+		case "host.ssh.test":
+			if hostTester == nil {
+				return "", fmt.Errorf("host executor is not configured")
+			}
+			if strings.TrimSpace(task.TargetID) == "" {
+				return "", fmt.Errorf("host.ssh.test targetId is required")
+			}
+			if err := hostTester.TestSSH(ctx, task.TargetID); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("host %s ssh tested by dispatch %s", task.TargetID, dispatch.ID), nil
 		case "registry.test":
 			if registryTester == nil {
 				return "", fmt.Errorf("registry executor is not configured")

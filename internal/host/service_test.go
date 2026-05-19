@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -137,6 +138,82 @@ func TestTestSSHTaskFailureRecordsTaskAvailabilityAndOfflineAlert(t *testing.T) 
 	}
 	if reloaded.Status != model.HostStatusUnknown {
 		t.Fatalf("host status = %s, want %s because ssh auth failed before dial", reloaded.Status, model.HostStatusUnknown)
+	}
+}
+
+func TestWorkerExecutesHostSSHDispatchFailure(t *testing.T) {
+	database, secrets := openHostTestServices(t)
+	tasks := tasksvc.NewService(database)
+	service := NewService(database, secrets)
+
+	secretItem, err := secrets.Create(context.Background(), secret.CreateRequest{
+		Name:       "Docker Token",
+		Type:       model.SecretTypeDockerToken,
+		Value:      "token-value",
+		OperatorID: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("create secret: %v", err)
+	}
+	hostItem, err := service.Create(context.Background(), CreateRequest{
+		Name:        "prod-host",
+		Address:     "127.0.0.1",
+		SSHPort:     22,
+		SSHUser:     "root",
+		SSHSecretID: secretItem.ID,
+		OperatorID:  "user-1",
+	})
+	if err != nil {
+		t.Fatalf("create host: %v", err)
+	}
+	taskItem := model.Task{
+		ID:         "task-host-ssh-failure",
+		Type:       "host.ssh.test",
+		Title:      "test host ssh",
+		Status:     model.TaskStatusPending,
+		TargetType: "host",
+		TargetID:   hostItem.ID,
+	}
+	if err := database.Create(&taskItem).Error; err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	dispatch := model.TaskDispatch{
+		ID:             "dispatch-host-ssh-failure",
+		TaskID:         taskItem.ID,
+		Source:         model.TaskDispatchSourceScheduled,
+		Status:         model.TaskDispatchStatusPending,
+		TimeoutSeconds: 60,
+		ConcurrencyKey: "host:" + hostItem.ID + ":ssh",
+		QueuedAt:       time.Now().UTC(),
+	}
+	if err := database.Create(&dispatch).Error; err != nil {
+		t.Fatalf("seed dispatch: %v", err)
+	}
+
+	worker := tasksvc.NewWorker(tasks)
+	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
+		Owner:    "host-test-worker",
+		Executor: tasksvc.NewDispatchExecutor(nil, service),
+	})
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	var updatedTask model.Task
+	if err := database.First(&updatedTask, "id = ?", taskItem.ID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	if updatedTask.Status != model.TaskStatusFailed || !strings.Contains(updatedTask.Error, "cannot be used for ssh") {
+		t.Fatalf("task after host ssh dispatch = %+v", updatedTask)
+	}
+	var updatedDispatch model.TaskDispatch
+	if err := database.First(&updatedDispatch, "id = ?", dispatch.ID).Error; err != nil {
+		t.Fatalf("load dispatch: %v", err)
+	}
+	if updatedDispatch.Status != model.TaskDispatchStatusFailed || updatedDispatch.FinishedAt == nil {
+		t.Fatalf("dispatch after host ssh failure = %+v", updatedDispatch)
 	}
 }
 
