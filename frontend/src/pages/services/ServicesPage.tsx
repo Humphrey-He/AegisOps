@@ -21,16 +21,18 @@ import { EmptyState } from "../../components/EmptyState";
 import { ErrorState } from "../../components/ErrorState";
 import { FormDrawer } from "../../components/FormDrawer";
 import { PageHeader } from "../../components/PageHeader";
+import { PermissionActionButton } from "../../components/PermissionActionButton";
 import { PermissionGuard } from "../../components/PermissionGuard";
 import { StatusBadge } from "../../components/StatusBadge";
 import { TaskStatus } from "../../components/TaskStatus";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
-import { alertsApi, auditsApi, dockerApi, registriesApi, servicesApi, tasksApi } from "../../lib/api";
+import { alertsApi, auditsApi, dockerApi, exportsApi, registriesApi, servicesApi, tasksApi } from "../../lib/api";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
 import { queryKeys } from "../../lib/queryKeys";
 import { auditMatchesResource, buildAuditsPath, buildTasksPath, taskMatchesResource } from "../../lib/resourceNavigation";
+import { useSessionStore } from "../../store/sessionStore";
 import type {
   AlertEvent,
   DockerNode,
@@ -417,6 +419,8 @@ function buildReleasePreview(
 
 export function ServicesPage() {
   const { message } = AntApp.useApp();
+  const permissions = useSessionStore((state) => state.permissions);
+  const canViewExports = permissions.includes("*") || permissions.includes("exports.view");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -741,6 +745,20 @@ export function ServicesPage() {
     },
   });
 
+  const exportMutation = useMutation({
+    mutationFn: (serviceId: string) => exportsApi.exportService(serviceId),
+    onSuccess: async (job) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.exports });
+      await message.success("服务导出已创建");
+      if (canViewExports) {
+        navigate(`/settings/exports?selected=${encodeURIComponent(job.id)}`);
+      }
+    },
+    onError: (error) => {
+      void message.error(getErrorMessage(error, "创建服务导出失败"));
+    },
+  });
+
   if (servicesQuery.isError) {
     return <ErrorState message={servicesQuery.error.message} onRetry={() => void servicesQuery.refetch()} />;
   }
@@ -1012,6 +1030,14 @@ export function ServicesPage() {
                       </PermissionGuard>
                     </div>
                     <div className="resource-action-group">
+                      <PermissionActionButton
+                        permission="exports.create"
+                        permissionReason="当前账号缺少 exports.create 权限，无法创建服务导出。"
+                        loading={exportMutation.isPending}
+                        onClick={() => exportMutation.mutate(selectedService.id)}
+                      >
+                        导出服务
+                      </PermissionActionButton>
                       <Button onClick={() => navigate(buildTasksPath({ resourceType: "service", resourceId: selectedService.id }))}>
                         查看任务
                       </Button>

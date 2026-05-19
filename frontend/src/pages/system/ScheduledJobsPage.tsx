@@ -1,6 +1,6 @@
 import { App as AntApp, Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { DangerConfirm } from "../../components/DangerConfirm";
@@ -22,6 +22,15 @@ import type { ScheduledJob, ScheduledJobDispatch, ScheduledJobInput } from "../.
 
 type ScheduledJobFormValues = ScheduledJobInput;
 type ScheduledJobTemplateKey = "blank" | "hostAvailability" | "serviceHealth";
+type ScheduledJobEnabledFilter = "" | "enabled" | "disabled";
+
+const cronPresetOptions = [
+  { label: "每分钟", value: "* * * * *", helper: "适合轻量巡检或高频健康探测" },
+  { label: "每 2 分钟", value: "*/2 * * * *", helper: "适合服务健康检查" },
+  { label: "每 5 分钟", value: "*/5 * * * *", helper: "适合主机可用性巡检" },
+  { label: "每 10 分钟", value: "*/10 * * * *", helper: "适合较低频的扫描或同步任务" },
+  { label: "每小时第 5 分钟", value: "5 * * * *", helper: "适合固定小时节奏的批处理任务" },
+] as const;
 
 const templateMeta: Record<
   ScheduledJobTemplateKey,
@@ -89,6 +98,19 @@ const templateMeta: Record<
   },
 };
 
+const templateFilterOptions: Array<{ label: string; value: ScheduledJobTemplateKey | "" }> = [
+  { label: "全部场景", value: "" },
+  { label: "主机巡检", value: "hostAvailability" },
+  { label: "服务巡检", value: "serviceHealth" },
+  { label: "自定义", value: "blank" },
+];
+
+const enabledFilterOptions: Array<{ label: string; value: ScheduledJobEnabledFilter }> = [
+  { label: "全部状态", value: "" },
+  { label: "已启用", value: "enabled" },
+  { label: "已停用", value: "disabled" },
+];
+
 function buildFormValues(job?: ScheduledJob | null): ScheduledJobFormValues {
   return {
     name: job?.name ?? "",
@@ -115,6 +137,36 @@ function validateJsonText(_: unknown, value?: string) {
   } catch {
     return Promise.reject(new Error("请输入合法 JSON"));
   }
+}
+
+function validateCronExpression(_: unknown, value?: string) {
+  const expr = value?.trim() ?? "";
+  if (!expr) {
+    return Promise.reject(new Error("请输入 Cron 表达式"));
+  }
+  const fields = expr.split(/\s+/);
+  if (fields.length !== 5) {
+    return Promise.reject(new Error("Cron 表达式必须包含 5 段"));
+  }
+  if (fields[1] !== "*" || fields[2] !== "*" || fields[3] !== "*" || fields[4] !== "*") {
+    return Promise.reject(new Error("当前仅支持分钟粒度的 Cron 表达式"));
+  }
+  const minute = fields[0];
+  if (minute === "*") {
+    return Promise.resolve();
+  }
+  if (minute.startsWith("*/")) {
+    const interval = Number.parseInt(minute.slice(2), 10);
+    if (Number.isNaN(interval) || interval <= 0 || interval > 1440) {
+      return Promise.reject(new Error("分钟间隔必须在 1 到 1440 之间"));
+    }
+    return Promise.resolve();
+  }
+  const minuteValue = Number.parseInt(minute, 10);
+  if (Number.isNaN(minuteValue) || minuteValue < 0 || minuteValue > 59) {
+    return Promise.reject(new Error("分钟值必须在 0 到 59 之间"));
+  }
+  return Promise.resolve();
 }
 
 function inferTemplate(job?: Pick<ScheduledJob, "type" | "targetType"> | null): ScheduledJobTemplateKey {
@@ -179,7 +231,11 @@ export function ScheduledJobsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledJob | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const [templateFilter, setTemplateFilter] = useState<ScheduledJobTemplateKey | "">("");
+  const [enabledFilter, setEnabledFilter] = useState<ScheduledJobEnabledFilter>("");
   const selectedJobId = searchParams.get("selected") ?? "";
+  const cronExprValue = Form.useWatch("cronExpr", form);
 
   const jobsQuery = useQuery({
     queryKey: queryKeys.scheduledJobs,
@@ -187,10 +243,57 @@ export function ScheduledJobsPage() {
   });
 
   const jobs = jobsQuery.data ?? [];
-  const selectedJob = jobs.find((item) => item.id === selectedJobId) ?? jobs[0] ?? null;
+  const filteredJobs = useMemo(() => {
+    let items = jobs;
+
+    if (templateFilter) {
+      items = items.filter((item) => inferTemplate(item) === templateFilter);
+    }
+    if (enabledFilter === "enabled") {
+      items = items.filter((item) => item.enabled);
+    }
+    if (enabledFilter === "disabled") {
+      items = items.filter((item) => !item.enabled);
+    }
+    if (!keyword.trim()) {
+      return items;
+    }
+
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    return items.filter((item) =>
+      `${item.name} ${item.type} ${item.cronExpr} ${item.targetType ?? ""} ${item.targetId ?? ""} ${item.concurrencyKey ?? ""}`
+        .toLowerCase()
+        .includes(normalizedKeyword),
+    );
+  }, [enabledFilter, jobs, keyword, templateFilter]);
+  const selectedJob = useMemo(() => {
+    if (!filteredJobs.length) {
+      return null;
+    }
+    return filteredJobs.find((item) => item.id === selectedJobId) ?? filteredJobs[0];
+  }, [filteredJobs, selectedJobId]);
+  const hasFilters = Boolean(keyword.trim() || templateFilter || enabledFilter);
   const enabledCount = jobs.filter((item) => item.enabled).length;
   const hostAvailabilityCount = jobs.filter((item) => inferTemplate(item) === "hostAvailability").length;
   const serviceHealthCount = jobs.filter((item) => inferTemplate(item) === "serviceHealth").length;
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      return;
+    }
+    if (filteredJobs.some((item) => item.id === selectedJobId)) {
+      return;
+    }
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (filteredJobs[0]?.id) {
+        next.set("selected", filteredJobs[0].id);
+      } else {
+        next.delete("selected");
+      }
+      return next;
+    });
+  }, [filteredJobs, selectedJobId, setSearchParams]);
 
   const dispatchesQuery = useQuery({
     queryKey: queryKeys.scheduledJobDispatches(selectedJob?.id ?? ""),
@@ -240,6 +343,33 @@ export function ScheduledJobsPage() {
     },
     onError: (error) => {
       void message.error(getErrorMessage(error, "删除调度任务失败"));
+    },
+  });
+
+  const toggleEnabledMutation = useMutation({
+    mutationFn: async (job: ScheduledJob) =>
+      scheduledJobsApi.save({
+        id: job.id,
+        name: job.name,
+        type: job.type,
+        enabled: !job.enabled,
+        cronExpr: job.cronExpr,
+        targetType: job.targetType,
+        targetId: job.targetId,
+        payloadJson: job.payloadJson,
+        retryPolicyJson: job.retryPolicyJson,
+        timeoutSeconds: job.timeoutSeconds,
+        concurrencyKey: job.concurrencyKey,
+      }),
+    onSuccess: async (job) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.scheduledJobs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.scheduledJobDispatches(job.id) }),
+      ]);
+      await message.success(job.enabled ? "调度任务已启用" : "调度任务已停用");
+    },
+    onError: (error) => {
+      void message.error(getErrorMessage(error, "切换调度任务状态失败"));
     },
   });
 
@@ -357,10 +487,49 @@ export function ScheduledJobsPage() {
         <div className="resource-workbench">
           <div className="resource-list-pane">
             <Card className="page-card">
+              <div className="page-toolbar">
+                <div className="page-toolbar-start">
+                  <Input.Search
+                    allowClear
+                    placeholder="搜索名称 / 类型 / 目标 / Cron"
+                    style={{ width: 280 }}
+                    value={keyword}
+                    onChange={(event) => setKeyword(event.target.value)}
+                    onSearch={setKeyword}
+                  />
+                  <Select
+                    style={{ width: 160 }}
+                    value={templateFilter}
+                    options={templateFilterOptions}
+                    onChange={(value) => setTemplateFilter((value ?? "") as ScheduledJobTemplateKey | "")}
+                  />
+                  <Select
+                    style={{ width: 160 }}
+                    value={enabledFilter}
+                    options={enabledFilterOptions}
+                    onChange={(value) => setEnabledFilter((value ?? "") as ScheduledJobEnabledFilter)}
+                  />
+                </div>
+                <Space wrap size={[12, 8]}>
+                  <Typography.Text type="secondary">
+                    当前显示 {filteredJobs.length} / {jobs.length} 条任务
+                  </Typography.Text>
+                  <Button
+                    onClick={() => {
+                      setKeyword("");
+                      setTemplateFilter("");
+                      setEnabledFilter("");
+                    }}
+                    disabled={!hasFilters}
+                  >
+                    清空筛选
+                  </Button>
+                </Space>
+              </div>
               <DataTable
                 rowKey="id"
                 loading={jobsQuery.isLoading}
-                dataSource={jobs}
+                dataSource={filteredJobs}
                 rowClassName={(item) => (item.id === selectedJob?.id ? "resource-row-selected" : "")}
                 onRow={(item) => ({
                   onClick: () => {
@@ -410,6 +579,21 @@ export function ScheduledJobsPage() {
                     title: "下次运行",
                     dataIndex: "nextRunAt",
                     render: (value?: string) => formatDateTime(value),
+                  },
+                  {
+                    title: "操作",
+                    key: "actions",
+                    render: (_, job) => (
+                      <PermissionActionButton
+                        size="small"
+                        permission="scheduler.manage"
+                        permissionReason="当前账号缺少 scheduler.manage 权限，无法切换调度任务状态。"
+                        loading={toggleEnabledMutation.isPending && toggleEnabledMutation.variables?.id === job.id}
+                        onClick={() => toggleEnabledMutation.mutate(job)}
+                      >
+                        {job.enabled ? "停用" : "启用"}
+                      </PermissionActionButton>
+                    ),
                   },
                 ]}
               />
@@ -467,6 +651,14 @@ export function ScheduledJobsPage() {
               actions={
                 selectedJob ? (
                   <Space wrap>
+                    <PermissionActionButton
+                      permission="scheduler.manage"
+                      permissionReason="当前账号缺少 scheduler.manage 权限，无法切换调度任务状态。"
+                      loading={toggleEnabledMutation.isPending && toggleEnabledMutation.variables?.id === selectedJob.id}
+                      onClick={() => toggleEnabledMutation.mutate(selectedJob)}
+                    >
+                      {selectedJob.enabled ? "停用任务" : "启用任务"}
+                    </PermissionActionButton>
                     <PermissionActionButton
                       permission="scheduler.manage"
                       permissionReason="当前账号缺少 scheduler.manage 权限，无法编辑调度任务。"
@@ -614,9 +806,32 @@ export function ScheduledJobsPage() {
             <Form.Item label="类型" name="type" rules={[{ required: true, message: "请输入任务类型" }]}>
               <Input placeholder="例如 host.availability.check / service.health.check" />
             </Form.Item>
-            <Form.Item label="Cron 表达式" name="cronExpr" rules={[{ required: true, message: "请输入 Cron 表达式" }]}>
+            <Form.Item
+              label="Cron 表达式"
+              name="cronExpr"
+              rules={[{ validator: validateCronExpression }]}
+              extra="当前仅支持分钟粒度：`* * * * *`、`*/N * * * *` 或 `5 * * * *`。"
+            >
               <Input placeholder="例如 */5 * * * *" />
             </Form.Item>
+            <div style={{ margin: "-4px 0 16px" }}>
+              <Space wrap size={[8, 8]}>
+                {cronPresetOptions.map((option) => (
+                  <Button
+                    key={option.value}
+                    size="small"
+                    type={cronExprValue === option.value ? "primary" : "default"}
+                    onClick={() => form.setFieldValue("cronExpr", option.value)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </Space>
+              <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+                {cronPresetOptions.find((option) => option.value === cronExprValue)?.helper ??
+                  "也可以手输分钟粒度 Cron，前端会按后端真实支持范围校验。"}
+              </Typography.Text>
+            </div>
 
             <div className="two-col-grid">
               <Form.Item label="目标类型" name="targetType">

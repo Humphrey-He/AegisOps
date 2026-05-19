@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { hostsApi, nginxApi, resourcesApi } from "../../lib/api";
+import { PermissionActionButton } from "../../components/PermissionActionButton";
+import { exportsApi, hostsApi, nginxApi, resourcesApi } from "../../lib/api";
 import { queryKeys } from "../../lib/queryKeys";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { DataTable } from "../../components/DataTable";
@@ -17,6 +18,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { TaskStatus } from "../../components/TaskStatus";
 import { formatDateTime } from "../../lib/format";
 import { buildTasksPath } from "../../lib/resourceNavigation";
+import { useSessionStore } from "../../store/sessionStore";
 import type { NginxConfigInput, NginxConfigVersion, NginxNode, NginxNodeInput } from "../../types/models";
 
 type NodeFormValues = {
@@ -37,6 +39,8 @@ type ConfigFormValues = {
 
 export function NginxNodesPage() {
   const { message } = AntApp.useApp();
+  const permissions = useSessionStore((state) => state.permissions);
+  const canViewExports = permissions.includes("*") || permissions.includes("exports.view");
   const [nodeForm] = Form.useForm<NodeFormValues>();
   const [configForm] = Form.useForm<ConfigFormValues>();
   const [keyword, setKeyword] = useState("");
@@ -198,6 +202,20 @@ export function NginxNodesPage() {
     onError: (error) => {
       setLatestActionText(null);
       void message.error(getErrorMessage(error));
+    },
+  });
+
+  const exportConfigMutation = useMutation({
+    mutationFn: ({ configId }: { configId: string }) => exportsApi.exportNginxConfig(configId),
+    onSuccess: async (job) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.exports });
+      await message.success("Nginx 配置导出已创建");
+      if (canViewExports) {
+        navigate(`/settings/exports?selected=${encodeURIComponent(job.id)}`);
+      }
+    },
+    onError: (error) => {
+      void message.error(getErrorMessage(error, "创建 Nginx 配置导出失败"));
     },
   });
 
@@ -540,6 +558,15 @@ export function NginxNodesPage() {
                   meta: formatDateTime(config.createdAt),
                   extra: (
                     <Space>
+                      <PermissionActionButton
+                        size="small"
+                        permission="exports.create"
+                        permissionReason="当前账号缺少 exports.create 权限，无法创建配置导出。"
+                        loading={exportConfigMutation.isPending}
+                        onClick={() => exportConfigMutation.mutate({ configId: config.id })}
+                      >
+                        导出
+                      </PermissionActionButton>
                       <StatusBadge status={config.status} />
                       <PermissionGuard permission="nginx.publish">
                         <Button

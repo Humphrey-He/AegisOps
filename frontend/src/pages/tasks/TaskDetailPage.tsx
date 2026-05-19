@@ -10,7 +10,7 @@ import { PermissionGuard } from "../../components/PermissionGuard";
 import { StatusBadge } from "../../components/StatusBadge";
 import { TaskStatus } from "../../components/TaskStatus";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
-import { tasksApi } from "../../lib/api";
+import { exportsApi, tasksApi } from "../../lib/api";
 import { getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
 import { queryKeys } from "../../lib/queryKeys";
@@ -21,6 +21,7 @@ import {
   getResourceTypeLabel,
 } from "../../lib/resourceNavigation";
 import { formatTaskExecutionPolicy, getTaskDispatchSourceMeta } from "../../lib/taskPresentation";
+import { useSessionStore } from "../../store/sessionStore";
 import type { NotificationRecord, ResourceActionHint, ResourceRisk, Task } from "../../types/models";
 
 const riskLevelMeta: Record<string, { tone: "success" | "warning" | "error"; title: string }> = {
@@ -78,6 +79,8 @@ function summarizeNotification(record: NotificationRecord) {
 
 export function TaskDetailPage() {
   const { message } = AntApp.useApp();
+  const permissions = useSessionStore((state) => state.permissions);
+  const canViewExports = permissions.includes("*") || permissions.includes("exports.view");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { taskId = "" } = useParams();
@@ -129,6 +132,20 @@ export function TaskDetailPage() {
     },
   });
 
+  const exportMutation = useMutation({
+    mutationFn: () => exportsApi.exportTask(taskId),
+    onSuccess: async (job) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.exports });
+      await message.success("任务导出已创建");
+      if (canViewExports) {
+        navigate(`/settings/exports?selected=${encodeURIComponent(job.id)}`);
+      }
+    },
+    onError: async (error) => {
+      void message.error(getErrorMessage(error, "创建任务导出失败"));
+    },
+  });
+
   const taskContext = taskContextQuery.data;
   const navigation = taskContext?.navigation;
   const risk = taskContext?.risk;
@@ -165,6 +182,14 @@ export function TaskDetailPage() {
           eyebrow="执行链路 / 单任务上下文"
           extra={
             <Space wrap>
+              <PermissionActionButton
+                permission="exports.create"
+                permissionReason="当前账号缺少 exports.create 权限，无法创建任务导出。"
+                loading={exportMutation.isPending}
+                onClick={() => exportMutation.mutate()}
+              >
+                导出任务包
+              </PermissionActionButton>
               <PermissionActionButton
                 permission="tasks.retry"
                 permissionReason="当前账号缺少 tasks.retry 权限，无法重新调度失败任务。"

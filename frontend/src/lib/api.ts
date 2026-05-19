@@ -2379,6 +2379,27 @@ export const exportsApi = {
     });
     return mapExportJob(item);
   },
+  exportTask: async (taskId: string): Promise<ExportJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持导出任务包");
+    }
+    const item = await http.get<BackendExportJob>(`/tasks/${taskId}/export`);
+    return mapExportJob(item);
+  },
+  exportService: async (serviceId: string): Promise<ExportJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持导出服务快照");
+    }
+    const item = await http.get<BackendExportJob>(`/services/${serviceId}/export`);
+    return mapExportJob(item);
+  },
+  exportNginxConfig: async (configId: string): Promise<ExportJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持导出 Nginx 配置版本");
+    }
+    const item = await http.get<BackendExportJob>(`/nginx/configs/${configId}/export`);
+    return mapExportJob(item);
+  },
   download: async (jobId: string): Promise<{ fileName?: string }> => {
     const result = await http.download(`/exports/${jobId}/download`);
     const url = URL.createObjectURL(result.blob);
