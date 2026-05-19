@@ -84,6 +84,8 @@ export const navItems: NavItem[] = [
     children: [
       { key: "/settings/notifications", label: "通知通道", permission: "notifications.view" },
       { key: "/settings/alert-rules", label: "告警规则", permission: "alerts.view" },
+      { key: "/settings/exports", label: "导出中心", permission: "exports.view" },
+      { key: "/settings/backups", label: "备份中心", permission: "backups.view" },
     ],
   },
   {
@@ -108,6 +110,8 @@ export const hiddenNavTitles: Record<string, string> = {
   "/alerts/events": "告警事件",
   "/settings/notifications": "通知通道",
   "/settings/alert-rules": "告警规则",
+  "/settings/exports": "导出中心",
+  "/settings/backups": "备份中心",
   "/system/scheduled-jobs": "调度任务",
   "/403": "无权限",
   "/404": "页面不存在",

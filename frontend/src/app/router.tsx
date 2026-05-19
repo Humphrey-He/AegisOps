@@ -21,6 +21,8 @@ const NotificationsPage = lazy(() =>
   import("../pages/settings/NotificationsPage").then((module) => ({ default: module.NotificationsPage })),
 );
 const AlertRulesPage = lazy(() => import("../pages/settings/AlertRulesPage").then((module) => ({ default: module.AlertRulesPage })));
+const ExportsPage = lazy(() => import("../pages/settings/ExportsPage").then((module) => ({ default: module.ExportsPage })));
+const BackupsPage = lazy(() => import("../pages/settings/BackupsPage").then((module) => ({ default: module.BackupsPage })));
 const AlertEventsPage = lazy(() => import("../pages/alerts/AlertEventsPage").then((module) => ({ default: module.AlertEventsPage })));
 const TasksPage = lazy(() => import("../pages/tasks/TasksPage").then((module) => ({ default: module.TasksPage })));
 const TaskDetailPage = lazy(() => import("../pages/tasks/TaskDetailPage").then((module) => ({ default: module.TaskDetailPage })));
@@ -193,6 +195,28 @@ export const router = createBrowserRouter([
           </RequirePermission>
         ),
         handle: { title: "告警规则" },
+      },
+      {
+        path: "settings/exports",
+        element: (
+          <RequirePermission permission="exports.view">
+            <LazyPage>
+              <ExportsPage />
+            </LazyPage>
+          </RequirePermission>
+        ),
+        handle: { title: "导出中心" },
+      },
+      {
+        path: "settings/backups",
+        element: (
+          <RequirePermission permission="backups.view">
+            <LazyPage>
+              <BackupsPage />
+            </LazyPage>
+          </RequirePermission>
+        ),
+        handle: { title: "备份中心" },
       },
       {
         path: "alerts/events",

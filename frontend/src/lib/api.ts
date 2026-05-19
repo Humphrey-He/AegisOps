@@ -14,6 +14,8 @@ import type {
   DashboardSummary,
   DockerNode,
   DockerNodeInput,
+  ExportJob,
+  ExportJobInput,
   Host,
   HostAvailabilityCheck,
   HostInput,
@@ -58,9 +60,12 @@ import type {
   SetupStatus,
   Task,
   TaskContext,
+  TaskDispatch,
   TerminalSession,
   User,
   UserInput,
+  BackupManifestResult,
+  BackupRecord,
 } from "../types/models";
 
 function token() {
@@ -140,6 +145,7 @@ type BackendTaskDispatch = {
   id: string;
   taskId: string;
   source?: Task["dispatchSource"];
+  jobId?: string;
   status?: Task["dispatchStatus"];
   retryCount?: number;
   maxRetry?: number;
@@ -148,6 +154,10 @@ type BackendTaskDispatch = {
   queuedAt?: string;
   startedAt?: string;
   finishedAt?: string;
+  leaseOwner?: string;
+  leaseExpiresAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type BackendTask = {
@@ -601,6 +611,40 @@ type BackendScheduledJobDispatch = {
   concurrencyKey?: string;
   queuedAt?: string;
   startedAt?: string;
+  finishedAt?: string;
+};
+
+type BackendExportJob = {
+  id: string;
+  type: ExportJob["type"];
+  status: ExportJob["status"];
+  resourceType?: string;
+  resourceId?: string;
+  filtersJson?: string;
+  fileName: string;
+  fileSize?: number;
+  contentType?: string;
+  masked?: boolean;
+  createdBy?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+};
+
+type BackendBackupRecord = {
+  id: string;
+  type: BackupRecord["type"];
+  status: BackupRecord["status"];
+  fileName: string;
+  fileSize?: number;
+  checksum?: string;
+  manifestJson?: string;
+  masked?: boolean;
+  createdBy?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
   finishedAt?: string;
 };
 
@@ -1212,6 +1256,65 @@ function mapScheduledJobDispatch(item: BackendScheduledJobDispatch, jobId: strin
     concurrencyKey: item.concurrencyKey,
     queuedAt: item.queuedAt,
     startedAt: item.startedAt,
+    finishedAt: item.finishedAt,
+  };
+}
+
+function mapTaskDispatch(item: BackendTaskDispatch): TaskDispatch {
+  return {
+    id: item.id,
+    taskId: item.taskId,
+    source: item.source,
+    jobId: item.jobId,
+    status: item.status,
+    retryCount: item.retryCount,
+    maxRetry: item.maxRetry,
+    timeoutSeconds: item.timeoutSeconds,
+    concurrencyKey: item.concurrencyKey,
+    leaseOwner: item.leaseOwner,
+    leaseExpiresAt: item.leaseExpiresAt,
+    queuedAt: item.queuedAt,
+    startedAt: item.startedAt,
+    finishedAt: item.finishedAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
+function mapExportJob(item: BackendExportJob): ExportJob {
+  return {
+    id: item.id,
+    type: item.type,
+    status: item.status,
+    resourceType: item.resourceType,
+    resourceId: item.resourceId,
+    filtersJson: item.filtersJson,
+    fileName: item.fileName,
+    fileSize: item.fileSize ?? 0,
+    contentType: item.contentType,
+    masked: item.masked ?? true,
+    createdBy: item.createdBy,
+    errorMessage: item.errorMessage,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    finishedAt: item.finishedAt,
+  };
+}
+
+function mapBackupRecord(item: BackendBackupRecord): BackupRecord {
+  return {
+    id: item.id,
+    type: item.type,
+    status: item.status,
+    fileName: item.fileName,
+    fileSize: item.fileSize ?? 0,
+    checksum: item.checksum,
+    manifestJson: item.manifestJson,
+    masked: item.masked ?? true,
+    createdBy: item.createdBy,
+    errorMessage: item.errorMessage,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
     finishedAt: item.finishedAt,
   };
 }
@@ -2128,6 +2231,60 @@ export const tasksApi = {
   },
 };
 
+export const taskDispatchesApi = {
+  list: async (filters?: {
+    status?: string;
+    source?: string;
+    jobId?: string;
+    taskId?: string;
+    concurrencyKey?: string;
+  }): Promise<TaskDispatch[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const params = new URLSearchParams();
+    if (filters?.status) {
+      params.set("status", filters.status);
+    }
+    if (filters?.source) {
+      params.set("source", filters.source);
+    }
+    if (filters?.jobId) {
+      params.set("jobId", filters.jobId);
+    }
+    if (filters?.taskId) {
+      params.set("taskId", filters.taskId);
+    }
+    if (filters?.concurrencyKey) {
+      params.set("concurrencyKey", filters.concurrencyKey);
+    }
+    const query = params.toString();
+    const page = await http.get<BackendPage<BackendTaskDispatch>>(query ? `/task-dispatches?${query}` : "/task-dispatches");
+    return pageItems(page).map(mapTaskDispatch);
+  },
+  detail: async (dispatchId: string): Promise<TaskDispatch> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持读取分发实例");
+    }
+    const item = await http.get<BackendTaskDispatch>(`/task-dispatches/${dispatchId}`);
+    return mapTaskDispatch(item);
+  },
+  cancel: async (dispatchId: string): Promise<TaskDispatch> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持取消分发实例");
+    }
+    const item = await http.post<BackendTaskDispatch>(`/task-dispatches/${dispatchId}/cancel`);
+    return mapTaskDispatch(item);
+  },
+  retry: async (dispatchId: string): Promise<TaskDispatch> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持重试分发实例");
+    }
+    const item = await http.post<BackendTaskDispatch>(`/task-dispatches/${dispatchId}/retry`);
+    return mapTaskDispatch(item);
+  },
+};
+
 export const scheduledJobsApi = {
   list: async (): Promise<ScheduledJob[]> => {
     if (USE_MOCK) {
@@ -2176,6 +2333,106 @@ export const scheduledJobsApi = {
       throw new Error("Mock 模式暂不支持删除调度任务");
     }
     return http.delete<{ deleted: boolean }>(`/scheduled-jobs/${jobId}`);
+  },
+};
+
+export const exportsApi = {
+  list: async (): Promise<ExportJob[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const page = await http.get<BackendPage<BackendExportJob>>("/exports");
+    return pageItems(page).map(mapExportJob);
+  },
+  detail: async (jobId: string): Promise<ExportJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持读取导出任务");
+    }
+    const item = await http.get<BackendExportJob>(`/exports/${jobId}`);
+    return mapExportJob(item);
+  },
+  create: async (payload: ExportJobInput): Promise<ExportJob> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持创建导出任务");
+    }
+    if (payload.kind === "resource") {
+      const item = await http.post<BackendExportJob>("/exports/resources", {
+        resourceType: payload.resourceType,
+        resourceId: payload.resourceId ?? "",
+        masked: payload.masked ?? true,
+      });
+      return mapExportJob(item);
+    }
+    if (payload.kind === "records") {
+      const item = await http.post<BackendExportJob>("/exports/records", {
+        recordType: payload.recordType,
+        format: payload.format ?? "json",
+        masked: payload.masked ?? true,
+      });
+      return mapExportJob(item);
+    }
+    const item = await http.post<BackendExportJob>("/exports/incidents", {
+      taskId: payload.taskId ?? "",
+      releaseId: payload.releaseId ?? "",
+      eventId: payload.eventId ?? "",
+      masked: payload.masked ?? true,
+    });
+    return mapExportJob(item);
+  },
+  download: async (jobId: string): Promise<{ fileName?: string }> => {
+    const result = await http.download(`/exports/${jobId}/download`);
+    const url = URL.createObjectURL(result.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = result.fileName ?? `export-${jobId}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    return { fileName: result.fileName };
+  },
+};
+
+export const backupsApi = {
+  list: async (): Promise<BackupRecord[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const page = await http.get<BackendPage<BackendBackupRecord>>("/backups");
+    return pageItems(page).map(mapBackupRecord);
+  },
+  detail: async (backupId: string): Promise<BackupRecord> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持读取备份任务");
+    }
+    const item = await http.get<BackendBackupRecord>(`/backups/${backupId}`);
+    return mapBackupRecord(item);
+  },
+  create: async (masked = true): Promise<BackupRecord> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持创建备份");
+    }
+    const item = await http.post<BackendBackupRecord>("/backups", { masked });
+    return mapBackupRecord(item);
+  },
+  manifest: async (backupId: string): Promise<BackupManifestResult> => {
+    if (USE_MOCK) {
+      throw new Error("Mock 模式暂不支持读取备份清单");
+    }
+    const result = await http.get<{ manifest?: string }>(`/backups/${backupId}/manifest`);
+    return { manifest: result.manifest ?? "" };
+  },
+  download: async (backupId: string): Promise<{ fileName?: string }> => {
+    const result = await http.download(`/backups/${backupId}/download`);
+    const url = URL.createObjectURL(result.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = result.fileName ?? `backup-${backupId}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    return { fileName: result.fileName };
   },
 };
 

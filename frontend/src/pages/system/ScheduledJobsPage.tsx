@@ -12,6 +12,7 @@ import { PermissionGuard } from "../../components/PermissionGuard";
 import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { StatusBadge } from "../../components/StatusBadge";
+import { TaskDispatchWorkbench } from "../../components/task/TaskDispatchWorkbench";
 import { scheduledJobsApi } from "../../lib/api";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
@@ -519,7 +520,7 @@ export function ScheduledJobsPage() {
                   <div className="resource-detail-section">
                     <ResourceActivityList
                       title="最近派发"
-                      helper="把调度任务最近触发出来的派发和执行任务收在一起，便于从计划层直接追到执行层。"
+                      helper="先快速浏览最新几次派发，再继续下钻到下面的实例工作台做筛选、重试和取消。"
                       actionLabel={selectedJob.targetType || selectedJob.targetId ? "查看相关任务" : undefined}
                       onActionClick={
                         selectedJob.targetType || selectedJob.targetId
@@ -537,6 +538,20 @@ export function ScheduledJobsPage() {
                       }
                     />
                   </div>
+                  <TaskDispatchWorkbench
+                    scopeTitle="派发实例工作台"
+                    scopeDescription="对齐这条调度任务下的真实 dispatch 实例，支持按状态筛选，并直接执行重试、取消等操作。"
+                    queryScope={`scheduled-job:${selectedJob.id}`}
+                    jobId={selectedJob.id}
+                    defaultSource="SCHEDULED"
+                    onMessage={(kind, text) => {
+                      if (kind === "success") {
+                        void message.success(text);
+                        return;
+                      }
+                      void message.error(text);
+                    }}
+                  />
                   <div className="resource-detail-section">
                     <div className="resource-subpanel">
                       <Typography.Text strong>Payload JSON</Typography.Text>

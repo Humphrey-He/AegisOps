@@ -44,6 +44,9 @@ export type TaskDispatchStatus =
   | "FAILED"
   | "CANCELED"
   | "TIMEOUT";
+export type ExportJobType = "resource" | "records" | "incident" | "backup";
+export type ExportJobStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+export type BackupRecordType = "manual" | "scheduled";
 
 export type PermissionDefinition = {
   key: string;
@@ -674,6 +677,84 @@ export type ScheduledJobDispatch = {
   queuedAt?: string;
   startedAt?: string;
   finishedAt?: string;
+};
+
+export type TaskDispatch = {
+  id: string;
+  taskId: string;
+  source?: TaskDispatchSource;
+  jobId?: string;
+  status?: TaskDispatchStatus;
+  retryCount?: number;
+  maxRetry?: number;
+  timeoutSeconds?: number;
+  concurrencyKey?: string;
+  leaseOwner?: string;
+  leaseExpiresAt?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ExportJob = {
+  id: string;
+  type: ExportJobType;
+  status: ExportJobStatus;
+  resourceType?: string;
+  resourceId?: string;
+  filtersJson?: string;
+  fileName: string;
+  fileSize: number;
+  contentType?: string;
+  masked: boolean;
+  createdBy?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+};
+
+export type ExportJobInput =
+  | {
+      kind: "resource";
+      resourceType: string;
+      resourceId?: string;
+      masked?: boolean;
+    }
+  | {
+      kind: "records";
+      recordType: string;
+      format?: "json" | "csv";
+      masked?: boolean;
+    }
+  | {
+      kind: "incident";
+      taskId?: string;
+      releaseId?: string;
+      eventId?: string;
+      masked?: boolean;
+    };
+
+export type BackupRecord = {
+  id: string;
+  type: BackupRecordType;
+  status: ExportJobStatus;
+  fileName: string;
+  fileSize: number;
+  checksum?: string;
+  manifestJson?: string;
+  masked: boolean;
+  createdBy?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+};
+
+export type BackupManifestResult = {
+  manifest: string;
 };
 
 export type ScheduledJobInput = {
