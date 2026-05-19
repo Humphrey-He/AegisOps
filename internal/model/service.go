@@ -32,6 +32,7 @@ type ServiceDefinition struct {
 	ID             string        `gorm:"primaryKey;size:36" json:"id"`
 	Name           string        `gorm:"size:128;not null;index" json:"name"`
 	Code           string        `gorm:"size:128;not null;uniqueIndex" json:"code"`
+	Environment    string        `gorm:"size:64;index" json:"environment"`
 	Group          string        `gorm:"size:128;index" json:"group"`
 	Tags           string        `gorm:"type:text" json:"tags"`
 	Description    string        `gorm:"size:512" json:"description"`
@@ -73,6 +74,7 @@ type ServiceInstance struct {
 	Image        string                `gorm:"size:512;not null" json:"image"`
 	ImageTag     string                `gorm:"size:128;not null" json:"imageTag"`
 	DockerNodeID string                `gorm:"size:36;index" json:"dockerNodeId"`
+	Environment  string                `gorm:"size:64;index" json:"environment"`
 	ContainerID  string                `gorm:"size:128;index" json:"containerId"`
 	Name         string                `gorm:"size:128;not null;index" json:"name"`
 	Status       ServiceInstanceStatus `gorm:"size:32;not null;default:PENDING;index" json:"status"`
@@ -88,6 +90,7 @@ type ServiceReleaseRecord struct {
 	ID              string               `gorm:"primaryKey;size:36" json:"id"`
 	ServiceID       string               `gorm:"size:36;not null;index;index:idx_service_release_records_service_status,priority:1" json:"serviceId"`
 	TaskID          string               `gorm:"size:36;not null;index" json:"taskId"`
+	Environment     string               `gorm:"size:64;index" json:"environment"`
 	Action          ServiceReleaseAction `gorm:"size:32;not null;index" json:"action"`
 	FromVersionID   string               `gorm:"size:36;index" json:"fromVersionId"`
 	FromVersion     string               `gorm:"size:64;index" json:"fromVersion"`

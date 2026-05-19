@@ -51,7 +51,7 @@ func (h *DockerHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service)
 
 func (h *DockerHandler) ListNodes(c *gin.Context) {
 	limit, offset := Pagination(c)
-	items, total, err := h.service.ListNodes(c.Request.Context(), c.Query("keyword"), limit, offset)
+	items, total, err := h.service.ListNodes(c.Request.Context(), c.Query("keyword"), c.Query("environment"), limit, offset)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, err.Error())
 		return

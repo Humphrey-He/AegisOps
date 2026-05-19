@@ -24,6 +24,7 @@ type Registry struct {
 	URL         string           `gorm:"size:512;not null" json:"url"`
 	AuthType    RegistryAuthType `gorm:"size:32;not null;default:NONE" json:"authType"`
 	SecretID    string           `gorm:"size:36;index" json:"secretId"`
+	Environment string           `gorm:"size:64;index" json:"environment"`
 	Description string           `gorm:"size:512" json:"description"`
 	Status      RegistryStatus   `gorm:"size:32;not null;default:UNKNOWN;index" json:"status"`
 	LastTestAt  *time.Time       `json:"lastTestAt"`
@@ -45,6 +46,7 @@ func AllModels() []any {
 		&Secret{},
 		&SecretReference{},
 		&SecretReadAudit{},
+		&Environment{},
 		&Host{},
 		&Task{},
 		&TaskStep{},

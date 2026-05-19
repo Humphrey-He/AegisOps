@@ -39,6 +39,7 @@ type CreateRequest struct {
 	URL         string                 `json:"url" binding:"required"`
 	AuthType    model.RegistryAuthType `json:"authType"`
 	SecretID    string                 `json:"secretId"`
+	Environment string                 `json:"environment"`
 	Description string                 `json:"description"`
 	OperatorID  string                 `json:"-"`
 }
@@ -48,6 +49,7 @@ type UpdateRequest struct {
 	URL         string                 `json:"url"`
 	AuthType    model.RegistryAuthType `json:"authType"`
 	SecretID    string                 `json:"secretId"`
+	Environment string                 `json:"environment"`
 	Description string                 `json:"description"`
 	OperatorID  string                 `json:"-"`
 }
@@ -101,6 +103,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Registr
 		URL:         normalizedURL,
 		AuthType:    req.AuthType,
 		SecretID:    strings.TrimSpace(req.SecretID),
+		Environment: strings.TrimSpace(req.Environment),
 		Description: req.Description,
 		Status:      model.RegistryStatusUnknown,
 		CreatedBy:   req.OperatorID,
@@ -109,13 +112,16 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Registr
 	return item, s.db.WithContext(ctx).Create(item).Error
 }
 
-func (s *Service) List(ctx context.Context, keyword string, limit, offset int) ([]model.Registry, int64, error) {
+func (s *Service) List(ctx context.Context, keyword, environment string, limit, offset int) ([]model.Registry, int64, error) {
 	var items []model.Registry
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.Registry{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("name LIKE ? OR url LIKE ? OR description LIKE ?", like, like, like)
+	}
+	if environment != "" {
+		query = query.Where("environment = ?", environment)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -159,6 +165,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 		item.AuthType = req.AuthType
 	}
 	item.SecretID = strings.TrimSpace(req.SecretID)
+	item.Environment = strings.TrimSpace(req.Environment)
 	item.Description = req.Description
 	item.UpdatedBy = req.OperatorID
 	if item.AuthType != model.RegistryAuthTypeNone && item.SecretID == "" {

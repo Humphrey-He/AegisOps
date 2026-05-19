@@ -41,6 +41,7 @@ type CreateNodeRequest struct {
 	Endpoint    string               `json:"endpoint" binding:"required"`
 	AuthType    model.DockerAuthType `json:"authType"`
 	SecretID    string               `json:"secretId"`
+	Environment string               `json:"environment"`
 	Description string               `json:"description"`
 	OperatorID  string               `json:"-"`
 }
@@ -50,6 +51,7 @@ type UpdateNodeRequest struct {
 	Endpoint    string               `json:"endpoint"`
 	AuthType    model.DockerAuthType `json:"authType"`
 	SecretID    string               `json:"secretId"`
+	Environment string               `json:"environment"`
 	Description string               `json:"description"`
 	OperatorID  string               `json:"-"`
 }
@@ -127,6 +129,7 @@ func (s *Service) CreateNode(ctx context.Context, req CreateNodeRequest) (*model
 		Endpoint:    req.Endpoint,
 		AuthType:    req.AuthType,
 		SecretID:    req.SecretID,
+		Environment: req.Environment,
 		Description: req.Description,
 		Status:      model.DockerNodeStatusUnknown,
 		CreatedBy:   req.OperatorID,
@@ -135,13 +138,16 @@ func (s *Service) CreateNode(ctx context.Context, req CreateNodeRequest) (*model
 	return item, s.db.WithContext(ctx).Create(item).Error
 }
 
-func (s *Service) ListNodes(ctx context.Context, keyword string, limit, offset int) ([]model.DockerNode, int64, error) {
+func (s *Service) ListNodes(ctx context.Context, keyword, environment string, limit, offset int) ([]model.DockerNode, int64, error) {
 	var items []model.DockerNode
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.DockerNode{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("name LIKE ? OR endpoint LIKE ?", like, like)
+	}
+	if environment != "" {
+		query = query.Where("environment = ?", environment)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -176,6 +182,7 @@ func (s *Service) UpdateNode(ctx context.Context, id string, req UpdateNodeReque
 		item.AuthType = req.AuthType
 	}
 	item.SecretID = req.SecretID
+	item.Environment = req.Environment
 	item.Description = req.Description
 	item.UpdatedBy = req.OperatorID
 	return item, s.db.WithContext(ctx).Save(item).Error

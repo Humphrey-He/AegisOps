@@ -145,6 +145,8 @@ func seedPermissions(ctx context.Context, tx *gorm.DB) ([]model.Permission, erro
 		{Name: "Docker Manage", Code: "docker.manage", Resource: "docker", Action: "manage"},
 		{Name: "Docker Test", Code: "docker.test", Resource: "docker", Action: "test"},
 		{Name: "Docker Operate", Code: "docker.operate", Resource: "docker", Action: "operate"},
+		{Name: "Environments View", Code: "environments.view", Resource: "environments", Action: "view"},
+		{Name: "Environments Manage", Code: "environments.manage", Resource: "environments", Action: "manage"},
 		{Name: "Registries Test", Code: "registries.test", Resource: "registries", Action: "test"},
 		{Name: "Nginx View", Code: "nginx.view", Resource: "nginx", Action: "view"},
 		{Name: "Nginx Manage", Code: "nginx.manage", Resource: "nginx", Action: "manage"},

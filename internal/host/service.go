@@ -32,6 +32,7 @@ type CreateRequest struct {
 	SSHPort     int    `json:"sshPort"`
 	SSHUser     string `json:"sshUser" binding:"required"`
 	SSHSecretID string `json:"sshSecretId" binding:"required"`
+	Environment string `json:"environment"`
 	Group       string `json:"group"`
 	Tags        string `json:"tags"`
 	OperatorID  string `json:"-"`
@@ -43,6 +44,7 @@ type UpdateRequest struct {
 	SSHPort     int    `json:"sshPort"`
 	SSHUser     string `json:"sshUser"`
 	SSHSecretID string `json:"sshSecretId"`
+	Environment string `json:"environment"`
 	Group       string `json:"group"`
 	Tags        string `json:"tags"`
 	OperatorID  string `json:"-"`
@@ -71,6 +73,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Host, e
 		SSHPort:     req.SSHPort,
 		SSHUser:     req.SSHUser,
 		SSHSecretID: req.SSHSecretID,
+		Environment: req.Environment,
 		Group:       req.Group,
 		Tags:        req.Tags,
 		Status:      model.HostStatusUnknown,
@@ -80,13 +83,16 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Host, e
 	return item, s.db.WithContext(ctx).Create(item).Error
 }
 
-func (s *Service) List(ctx context.Context, keyword string, limit, offset int) ([]model.Host, int64, error) {
+func (s *Service) List(ctx context.Context, keyword, environment string, limit, offset int) ([]model.Host, int64, error) {
 	var items []model.Host
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.Host{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("name LIKE ? OR address LIKE ? OR tags LIKE ?", like, like, like)
+	}
+	if environment != "" {
+		query = query.Where("environment = ?", environment)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -126,6 +132,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 	if req.SSHSecretID != "" {
 		item.SSHSecretID = req.SSHSecretID
 	}
+	item.Environment = req.Environment
 	item.Group = req.Group
 	item.Tags = req.Tags
 	item.UpdatedBy = req.OperatorID

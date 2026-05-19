@@ -167,6 +167,94 @@ func TestRegistryDeleteRejectsServiceReference(t *testing.T) {
 	}
 }
 
+func TestEnvironmentRoutesFilterResourcesAndProtectDelete(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	router := NewRouter(cfg, database, zap.NewNop())
+	token := loginAndToken(t, router)
+
+	createEnv := performRequest(router, http.MethodPost, "/api/environments", []byte(`{"name":"Production","code":"prod","description":"production env","sortOrder":1}`), token)
+	if createEnv.Code != http.StatusCreated {
+		t.Fatalf("POST /api/environments status = %d, want %d; body=%s", createEnv.Code, http.StatusCreated, createEnv.Body.String())
+	}
+	var envPayload struct {
+		Data struct {
+			ID   string `json:"id"`
+			Code string `json:"code"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createEnv.Body.Bytes(), &envPayload); err != nil {
+		t.Fatalf("decode environment response: %v", err)
+	}
+	if envPayload.Data.Code != "prod" {
+		t.Fatalf("environment code = %q, want prod", envPayload.Data.Code)
+	}
+
+	prodDocker := performRequest(router, http.MethodPost, "/api/docker/nodes", []byte(`{"name":"prod-docker","endpoint":"mock://prod-docker","authType":"NONE","environment":"prod"}`), token)
+	if prodDocker.Code != http.StatusCreated {
+		t.Fatalf("POST /api/docker/nodes prod status = %d, want %d; body=%s", prodDocker.Code, http.StatusCreated, prodDocker.Body.String())
+	}
+	devDocker := performRequest(router, http.MethodPost, "/api/docker/nodes", []byte(`{"name":"dev-docker","endpoint":"mock://dev-docker","authType":"NONE","environment":"dev"}`), token)
+	if devDocker.Code != http.StatusCreated {
+		t.Fatalf("POST /api/docker/nodes dev status = %d, want %d; body=%s", devDocker.Code, http.StatusCreated, devDocker.Body.String())
+	}
+
+	listDocker := performRequest(router, http.MethodGet, "/api/docker/nodes?environment=prod", nil, token)
+	if listDocker.Code != http.StatusOK {
+		t.Fatalf("GET /api/docker/nodes status = %d, want %d; body=%s", listDocker.Code, http.StatusOK, listDocker.Body.String())
+	}
+	var dockerPayload struct {
+		Data struct {
+			Items []struct {
+				Name        string `json:"name"`
+				Environment string `json:"environment"`
+			} `json:"items"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listDocker.Body.Bytes(), &dockerPayload); err != nil {
+		t.Fatalf("decode docker list response: %v; body=%s", err, listDocker.Body.String())
+	}
+	if dockerPayload.Data.Total != 1 || len(dockerPayload.Data.Items) != 1 || dockerPayload.Data.Items[0].Name != "prod-docker" {
+		t.Fatalf("unexpected prod docker list: %+v", dockerPayload.Data)
+	}
+
+	createService := performRequest(router, http.MethodPost, "/api/services", []byte(`{
+		"name":"Prod Service",
+		"code":"prod-service",
+		"environment":"prod",
+		"image":"nginx",
+		"targetId":"`+decodeID(t, prodDocker.Body.Bytes())+`"
+	}`), token)
+	if createService.Code != http.StatusCreated {
+		t.Fatalf("POST /api/services status = %d, want %d; body=%s", createService.Code, http.StatusCreated, createService.Body.String())
+	}
+
+	listServices := performRequest(router, http.MethodGet, "/api/services?environment=prod", nil, token)
+	if listServices.Code != http.StatusOK {
+		t.Fatalf("GET /api/services status = %d, want %d; body=%s", listServices.Code, http.StatusOK, listServices.Body.String())
+	}
+
+	deleteEnv := performRequest(router, http.MethodDelete, "/api/environments/"+envPayload.Data.ID, nil, token)
+	if deleteEnv.Code != http.StatusBadRequest {
+		t.Fatalf("DELETE referenced environment status = %d, want %d; body=%s", deleteEnv.Code, http.StatusBadRequest, deleteEnv.Body.String())
+	}
+}
+
 func TestServiceReleaseSmoke(t *testing.T) {
 	t.Parallel()
 

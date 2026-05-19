@@ -326,6 +326,46 @@ func TestReleaseRejectsWhenAnotherReleaseIsRunning(t *testing.T) {
 	}
 }
 
+func TestReleaseRejectsDockerNodeEnvironmentMismatch(t *testing.T) {
+	database := openServiceTestDB(t)
+	tasks := tasksvc.NewService(database)
+	service := NewService(database, tasks, NoopReleaseExecutor{})
+
+	if err := database.Create(&model.DockerNode{
+		ID:          "docker-dev-1",
+		Name:        "dev docker",
+		Endpoint:    "mock://dev-docker",
+		Environment: "dev",
+		Status:      model.DockerNodeStatusOnline,
+	}).Error; err != nil {
+		t.Fatalf("seed docker node: %v", err)
+	}
+	definition := seedServiceDefinition(t, database, model.ServiceDefinition{
+		ID:          "svc-1",
+		Name:        "Prod API",
+		Code:        "prod-api",
+		Environment: "prod",
+		Image:       "registry.local/prod-api",
+		DefaultTag:  "1.0.0",
+		TargetID:    "docker-dev-1",
+	})
+
+	result, err := service.Release(context.Background(), definition.ID, ReleaseRequest{
+		ImageTag:   "1.0.1",
+		Version:    "2026.05.19",
+		OperatorID: "user-1",
+	})
+	if err == nil {
+		t.Fatal("expected release to fail on environment mismatch")
+	}
+	if !strings.Contains(err.Error(), "does not match service environment") {
+		t.Fatalf("release error = %q, want environment mismatch", err.Error())
+	}
+	if result != nil {
+		t.Fatalf("release result = %+v, want nil", result)
+	}
+}
+
 type stubReleaseExecutor struct {
 	validateErr error
 	deployErr   error

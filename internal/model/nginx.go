@@ -14,6 +14,7 @@ type NginxNode struct {
 	ID            string          `gorm:"primaryKey;size:36" json:"id"`
 	Name          string          `gorm:"size:128;not null;index" json:"name"`
 	HostID        string          `gorm:"size:36;not null;index" json:"hostId"`
+	Environment   string          `gorm:"size:64;index" json:"environment"`
 	ConfigPath    string          `gorm:"size:512;not null" json:"configPath"`
 	TestCommand   string          `gorm:"size:512;not null" json:"testCommand"`
 	ReloadCommand string          `gorm:"size:512;not null" json:"reloadCommand"`

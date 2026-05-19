@@ -39,6 +39,7 @@ type Service struct {
 type CreateNodeRequest struct {
 	Name          string `json:"name" binding:"required"`
 	HostID        string `json:"hostId" binding:"required"`
+	Environment   string `json:"environment"`
 	ConfigPath    string `json:"configPath"`
 	TestCommand   string `json:"testCommand"`
 	ReloadCommand string `json:"reloadCommand"`
@@ -49,6 +50,7 @@ type CreateNodeRequest struct {
 type UpdateNodeRequest struct {
 	Name          string `json:"name"`
 	HostID        string `json:"hostId"`
+	Environment   string `json:"environment"`
 	ConfigPath    string `json:"configPath"`
 	TestCommand   string `json:"testCommand"`
 	ReloadCommand string `json:"reloadCommand"`
@@ -90,6 +92,7 @@ func (s *Service) CreateNode(ctx context.Context, req CreateNodeRequest) (*model
 		ID:            uuid.NewString(),
 		Name:          strings.TrimSpace(req.Name),
 		HostID:        req.HostID,
+		Environment:   strings.TrimSpace(req.Environment),
 		ConfigPath:    defaultString(req.ConfigPath, defaultConfigPath),
 		TestCommand:   defaultString(req.TestCommand, defaultTestCommand),
 		ReloadCommand: defaultString(req.ReloadCommand, defaultReloadCommand),
@@ -104,13 +107,16 @@ func (s *Service) CreateNode(ctx context.Context, req CreateNodeRequest) (*model
 	return item, s.db.WithContext(ctx).Create(item).Error
 }
 
-func (s *Service) ListNodes(ctx context.Context, keyword string, limit, offset int) ([]model.NginxNode, int64, error) {
+func (s *Service) ListNodes(ctx context.Context, keyword, environment string, limit, offset int) ([]model.NginxNode, int64, error) {
 	var items []model.NginxNode
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.NginxNode{}).Preload("Host")
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("name LIKE ? OR description LIKE ? OR config_path LIKE ?", like, like, like)
+	}
+	if environment != "" {
+		query = query.Where("environment = ?", environment)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -144,6 +150,7 @@ func (s *Service) UpdateNode(ctx context.Context, id string, req UpdateNodeReque
 	if req.Name != "" {
 		item.Name = strings.TrimSpace(req.Name)
 	}
+	item.Environment = strings.TrimSpace(req.Environment)
 	if req.ConfigPath != "" {
 		item.ConfigPath = req.ConfigPath
 	}

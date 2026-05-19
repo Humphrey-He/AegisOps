@@ -24,6 +24,7 @@ type DockerNode struct {
 	Endpoint    string           `gorm:"size:255;not null" json:"endpoint"`
 	AuthType    DockerAuthType   `gorm:"size:32;not null;default:NONE" json:"authType"`
 	SecretID    string           `gorm:"size:36;index" json:"secretId"`
+	Environment string           `gorm:"size:64;index" json:"environment"`
 	Description string           `gorm:"size:512" json:"description"`
 	Status      DockerNodeStatus `gorm:"size:32;not null;default:UNKNOWN;index" json:"status"`
 	LastTestAt  *time.Time       `json:"lastTestAt"`

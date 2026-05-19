@@ -37,7 +37,7 @@ func (h *ServiceHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Service
 
 func (h *ServiceHandler) List(c *gin.Context) {
 	limit, offset := Pagination(c)
-	items, total, err := h.service.List(c.Request.Context(), c.Query("keyword"), c.Query("status"), limit, offset)
+	items, total, err := h.service.List(c.Request.Context(), c.Query("keyword"), c.Query("status"), c.Query("environment"), limit, offset)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, err.Error())
 		return

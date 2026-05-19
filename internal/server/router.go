@@ -10,6 +10,7 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/demo"
 	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
+	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	exportsvc "github.com/Humphrey-He/AegisOps/internal/exporter"
 	"github.com/Humphrey-He/AegisOps/internal/handler"
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
@@ -87,6 +88,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	hostService.SetTaskService(taskService)
 	dockerService := dockersvc.NewService(database, secretService)
 	dockerService.SetTaskService(taskService)
+	environmentService := envsvc.NewService(database)
 	notificationService := notificationsvc.NewService(database, secretService)
 	notificationService.SetOptions(notificationsvc.Options{TemplateVersion: cfg.Notification.TemplateVersion, PublicBaseURL: cfg.Notification.PublicBaseURL})
 	alertService := alertsvc.NewService(database, notificationService)
@@ -119,6 +121,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	hostHandler := handler.NewHostHandler(hostService, auditService)
 	taskHandler := handler.NewTaskHandler(taskService, database)
 	dockerHandler := handler.NewDockerHandler(dockerService, auditService)
+	environmentHandler := handler.NewEnvironmentHandler(environmentService, auditService)
 	terminalHandler := handler.NewTerminalHandler(terminalService)
 	registryHandler := handler.NewRegistryHandler(registryService, auditService)
 	serviceHandler := handler.NewServiceHandler(serviceService, auditService)
@@ -140,6 +143,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	hostHandler.RegisterRoutes(protected, rbacService)
 	taskHandler.RegisterRoutes(protected, rbacService)
 	dockerHandler.RegisterRoutes(protected, rbacService)
+	environmentHandler.RegisterRoutes(protected, rbacService)
 	terminalHandler.RegisterRoutes(protected, rbacService)
 	registryHandler.RegisterRoutes(protected, rbacService)
 	serviceHandler.RegisterRoutes(protected, rbacService)

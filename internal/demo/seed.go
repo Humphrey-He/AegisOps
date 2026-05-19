@@ -17,6 +17,9 @@ func Seed(ctx context.Context, db *gorm.DB, env string) error {
 		return nil
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := upsertEnvironment(tx); err != nil {
+			return err
+		}
 		registry, err := upsertRegistry(tx)
 		if err != nil {
 			return err
@@ -37,12 +40,27 @@ func shouldSeed(env string) bool {
 	return env == "" || env == "dev" || env == "development" || env == "test"
 }
 
+func upsertEnvironment(tx *gorm.DB) error {
+	item := model.Environment{
+		ID:          stableID("environment-dev"),
+		Name:        "Development",
+		Code:        "dev",
+		Description: "Default demo environment",
+		Status:      model.EnvironmentStatusActive,
+		SortOrder:   10,
+		CreatedBy:   "system",
+		UpdatedBy:   "system",
+	}
+	return tx.Where("id = ?", item.ID).Assign(item).FirstOrCreate(&item).Error
+}
+
 func upsertRegistry(tx *gorm.DB) (*model.Registry, error) {
 	item := model.Registry{
 		ID:          stableID("demo-registry"),
 		Name:        "Demo Registry",
 		URL:         "https://registry-1.docker.io",
 		AuthType:    model.RegistryAuthTypeNone,
+		Environment: "dev",
 		Description: "Demo registry seeded for live API walkthrough",
 		Status:      model.RegistryStatusOnline,
 		CreatedBy:   "system",
@@ -59,6 +77,7 @@ func upsertDockerNode(tx *gorm.DB) (*model.DockerNode, error) {
 		Name:        "mock-docker-live-01",
 		Endpoint:    "mock://docker-live-01",
 		AuthType:    model.DockerAuthTypeNone,
+		Environment: "dev",
 		Description: "Live API demo node. Backend executes container actions in mock mode.",
 		Status:      model.DockerNodeStatusOnline,
 		LastTestAt:  &now,
@@ -95,6 +114,7 @@ func upsertServices(tx *gorm.DB, registryID, nodeID string) error {
 			ID:             stableID("demo-service-aegisops-api"),
 			Name:           "AegisOps API Demo",
 			Code:           "aegisops-api",
+			Environment:    "dev",
 			Group:          "demo",
 			Tags:           `["demo","live-api"]`,
 			Description:    "Demo service for live API release flow",
@@ -116,6 +136,7 @@ func upsertServices(tx *gorm.DB, registryID, nodeID string) error {
 			ID:             stableID("demo-service-console"),
 			Name:           "Console Preview Demo",
 			Code:           "console-preview",
+			Environment:    "dev",
 			Group:          "demo",
 			Tags:           `["demo","preview"]`,
 			Description:    "Demo service ready for release/upgrade testing",
@@ -163,6 +184,7 @@ func upsertInitialVersionAndInstance(tx *gorm.DB, service model.ServiceDefinitio
 		Image:        service.Image + ":" + service.DefaultTag,
 		ImageTag:     service.DefaultTag,
 		DockerNodeID: nodeID,
+		Environment:  service.Environment,
 		ContainerID:  stableID("demo-container-aegisops-api"),
 		Name:         service.Code,
 		Status:       model.ServiceInstanceStatusRunning,

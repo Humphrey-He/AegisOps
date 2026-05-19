@@ -17,6 +17,7 @@ type Host struct {
 	SSHPort     int        `gorm:"not null;default:22" json:"sshPort"`
 	SSHUser     string     `gorm:"size:128;not null" json:"sshUser"`
 	SSHSecretID string     `gorm:"size:36;index" json:"sshSecretId"`
+	Environment string     `gorm:"size:64;index" json:"environment"`
 	Group       string     `gorm:"size:128;index" json:"group"`
 	Tags        string     `gorm:"type:text" json:"tags"`
 	Status      HostStatus `gorm:"size:32;not null;default:UNKNOWN;index" json:"status"`

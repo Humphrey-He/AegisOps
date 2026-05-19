@@ -119,6 +119,7 @@ func (NoopReleaseExecutor) Deploy(_ context.Context, req DeployRequest) (*Deploy
 type CreateRequest struct {
 	Name           string              `json:"name" binding:"required"`
 	Code           string              `json:"code" binding:"required"`
+	Environment    string              `json:"environment"`
 	Group          string              `json:"group"`
 	Tags           string              `json:"tags"`
 	Description    string              `json:"description"`
@@ -137,6 +138,7 @@ type CreateRequest struct {
 
 type UpdateRequest struct {
 	Name           string              `json:"name"`
+	Environment    string              `json:"environment"`
 	Group          string              `json:"group"`
 	Tags           string              `json:"tags"`
 	Description    string              `json:"description"`
@@ -193,6 +195,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Service
 		ID:             uuid.NewString(),
 		Name:           strings.TrimSpace(req.Name),
 		Code:           strings.TrimSpace(req.Code),
+		Environment:    strings.TrimSpace(req.Environment),
 		Group:          req.Group,
 		Tags:           req.Tags,
 		Description:    req.Description,
@@ -216,7 +219,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Service
 	return item, err
 }
 
-func (s *Service) List(ctx context.Context, keyword, status string, limit, offset int) ([]model.ServiceDefinition, int64, error) {
+func (s *Service) List(ctx context.Context, keyword, status, environment string, limit, offset int) ([]model.ServiceDefinition, int64, error) {
 	var items []model.ServiceDefinition
 	var total int64
 	query := s.db.WithContext(ctx).Model(&model.ServiceDefinition{})
@@ -226,6 +229,9 @@ func (s *Service) List(ctx context.Context, keyword, status string, limit, offse
 	}
 	if status != "" {
 		query = query.Where("status = ?", status)
+	}
+	if environment != "" {
+		query = query.Where("environment = ?", environment)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -253,6 +259,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 	if req.Name != "" {
 		item.Name = strings.TrimSpace(req.Name)
 	}
+	item.Environment = strings.TrimSpace(req.Environment)
 	if req.Group != "" {
 		item.Group = req.Group
 	}
@@ -388,6 +395,9 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 	if err := s.ensureNoRunningRelease(ctx, service.ID); err != nil {
 		return nil, err
 	}
+	if err := s.ensureTargetEnvironment(ctx, service, targetID); err != nil {
+		return nil, err
+	}
 	payloadBytes, _ := json.Marshal(map[string]string{
 		"serviceId":   service.ID,
 		"action":      string(action),
@@ -441,6 +451,7 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 		ID:            uuid.NewString(),
 		ServiceID:     service.ID,
 		TaskID:        task.ID,
+		Environment:   service.Environment,
 		Action:        action,
 		FromVersion:   service.CurrentVersion,
 		TargetVersion: version,
@@ -506,7 +517,7 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 	}); err != nil {
 		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
 		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
-		_ = s.recordFailedInstance(ctx, service.ID, targetVersionID, version, service.Image, imageTag, targetID, service.Code, err.Error())
+		_ = s.recordFailedInstance(ctx, service, targetVersionID, version, imageTag, targetID, err.Error())
 		return nil, err
 	}
 	err = runStep("record service state", func() error {
@@ -533,6 +544,7 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 				Image:        firstNonEmpty(deployResult.Image, service.Image),
 				ImageTag:     imageTag,
 				DockerNodeID: targetID,
+				Environment:  service.Environment,
 				ContainerID:  deployResult.ContainerID,
 				Name:         service.Code,
 				Status:       model.ServiceInstanceStatusRunning,
@@ -603,16 +615,34 @@ func (s *Service) updateReleaseFailure(ctx context.Context, releaseID, message s
 	}).Error
 }
 
-func (s *Service) recordFailedInstance(ctx context.Context, serviceID, versionID, version, image, imageTag, targetID, name, message string) error {
+func (s *Service) ensureTargetEnvironment(ctx context.Context, service *model.ServiceDefinition, targetID string) error {
+	if strings.TrimSpace(service.Environment) == "" || strings.TrimSpace(targetID) == "" {
+		return nil
+	}
+	var node model.DockerNode
+	if err := s.db.WithContext(ctx).First(&node, "id = ?", targetID).Error; err != nil {
+		return err
+	}
+	if strings.TrimSpace(node.Environment) == "" {
+		return nil
+	}
+	if node.Environment != service.Environment {
+		return fmt.Errorf("target docker node environment %s does not match service environment %s", node.Environment, service.Environment)
+	}
+	return nil
+}
+
+func (s *Service) recordFailedInstance(ctx context.Context, service *model.ServiceDefinition, versionID, version, imageTag, targetID, message string) error {
 	instance := model.ServiceInstance{
 		ID:           uuid.NewString(),
-		ServiceID:    serviceID,
+		ServiceID:    service.ID,
 		VersionID:    versionID,
 		Version:      version,
-		Image:        image,
+		Image:        service.Image,
 		ImageTag:     imageTag,
 		DockerNodeID: targetID,
-		Name:         name,
+		Environment:  service.Environment,
+		Name:         service.Code,
 		Status:       model.ServiceInstanceStatusFailed,
 		LastError:    message,
 	}
