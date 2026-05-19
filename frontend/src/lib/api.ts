@@ -53,6 +53,7 @@ import type {
   SecretReference,
   SecretInputPayload,
   ScheduledJob,
+  ScheduledJobDispatch,
   ScheduledJobInput,
   SetupStatus,
   Task,
@@ -585,6 +586,22 @@ type BackendScheduledJob = {
   updatedBy?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+type BackendScheduledJobDispatch = {
+  id: string;
+  taskId: string;
+  jobId?: string;
+  scheduledJobId?: string;
+  source?: ScheduledJobDispatch["source"];
+  status?: ScheduledJobDispatch["status"];
+  retryCount?: number;
+  maxRetry?: number;
+  timeoutSeconds?: number;
+  concurrencyKey?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
 };
 
 function normalizeUserStatus(status: BackendUser["status"]): User["status"] {
@@ -1179,6 +1196,23 @@ function mapScheduledJob(item: BackendScheduledJob): ScheduledJob {
     updatedBy: item.updatedBy,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+  };
+}
+
+function mapScheduledJobDispatch(item: BackendScheduledJobDispatch, jobId: string): ScheduledJobDispatch {
+  return {
+    id: item.id,
+    taskId: item.taskId,
+    jobId: item.jobId ?? item.scheduledJobId ?? jobId,
+    source: item.source,
+    status: item.status,
+    retryCount: item.retryCount,
+    maxRetry: item.maxRetry,
+    timeoutSeconds: item.timeoutSeconds,
+    concurrencyKey: item.concurrencyKey,
+    queuedAt: item.queuedAt,
+    startedAt: item.startedAt,
+    finishedAt: item.finishedAt,
   };
 }
 
@@ -2108,6 +2142,13 @@ export const scheduledJobsApi = {
     }
     const item = await http.get<BackendScheduledJob>(`/scheduled-jobs/${jobId}`);
     return mapScheduledJob(item);
+  },
+  dispatches: async (jobId: string): Promise<ScheduledJobDispatch[]> => {
+    if (USE_MOCK) {
+      return [];
+    }
+    const page = await http.get<BackendPage<BackendScheduledJobDispatch>>(`/scheduled-jobs/${jobId}/dispatches`);
+    return pageItems(page).map((item) => mapScheduledJobDispatch(item, jobId));
   },
   save: async (payload: ScheduledJobInput): Promise<ScheduledJob> => {
     if (USE_MOCK) {

@@ -661,6 +661,21 @@ export type ScheduledJob = {
   updatedAt: string;
 };
 
+export type ScheduledJobDispatch = {
+  id: string;
+  taskId: string;
+  jobId: string;
+  source?: TaskDispatchSource;
+  status?: TaskDispatchStatus;
+  retryCount?: number;
+  maxRetry?: number;
+  timeoutSeconds?: number;
+  concurrencyKey?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
 export type ScheduledJobInput = {
   id?: string;
   name: string;

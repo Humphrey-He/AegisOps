@@ -1,7 +1,7 @@
 import { App as AntApp, Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tag, Typography } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { DangerConfirm } from "../../components/DangerConfirm";
 import { DataTable } from "../../components/DataTable";
@@ -9,13 +9,15 @@ import { FormDrawer } from "../../components/FormDrawer";
 import { PageHeader } from "../../components/PageHeader";
 import { PermissionActionButton } from "../../components/PermissionActionButton";
 import { PermissionGuard } from "../../components/PermissionGuard";
+import { ResourceActivityList } from "../../components/resource/ResourceActivityList";
 import { ResourceDetailPanel } from "../../components/resource/ResourceDetailPanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { scheduledJobsApi } from "../../lib/api";
 import { applyFormErrors, getErrorMessage } from "../../lib/forms";
 import { formatDateTime } from "../../lib/format";
 import { queryKeys } from "../../lib/queryKeys";
-import type { ScheduledJob, ScheduledJobInput } from "../../types/models";
+import { formatTaskExecutionPolicy, getTaskDispatchSourceMeta } from "../../lib/taskPresentation";
+import type { ScheduledJob, ScheduledJobDispatch, ScheduledJobInput } from "../../types/models";
 
 type ScheduledJobFormValues = ScheduledJobInput;
 type ScheduledJobTemplateKey = "blank" | "hostAvailability" | "serviceHealth";
@@ -158,8 +160,18 @@ function prettyJson(text?: string) {
   }
 }
 
+function formatExecutionTimeline(dispatch: ScheduledJobDispatch) {
+  const parts = [
+    dispatch.queuedAt ? `入队 ${formatDateTime(dispatch.queuedAt)}` : "",
+    dispatch.startedAt ? `开始 ${formatDateTime(dispatch.startedAt)}` : "",
+    dispatch.finishedAt ? `结束 ${formatDateTime(dispatch.finishedAt)}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ") || "尚未进入执行时间线";
+}
+
 export function ScheduledJobsPage() {
   const { message } = AntApp.useApp();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<ScheduledJobFormValues>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -178,6 +190,18 @@ export function ScheduledJobsPage() {
   const enabledCount = jobs.filter((item) => item.enabled).length;
   const hostAvailabilityCount = jobs.filter((item) => inferTemplate(item) === "hostAvailability").length;
   const serviceHealthCount = jobs.filter((item) => inferTemplate(item) === "serviceHealth").length;
+
+  const dispatchesQuery = useQuery({
+    queryKey: queryKeys.scheduledJobDispatches(selectedJob?.id ?? ""),
+    queryFn: () => scheduledJobsApi.dispatches(selectedJob?.id ?? ""),
+    enabled: Boolean(selectedJob?.id),
+    refetchInterval: ({ state }) => {
+      const dispatches = state.data as ScheduledJobDispatch[] | undefined;
+      return dispatches?.some((item) => item.status === "PENDING" || item.status === "DISPATCHED" || item.status === "RUNNING")
+        ? 3000
+        : false;
+    },
+  });
 
   const saveMutation = useMutation({
     mutationFn: scheduledJobsApi.save,
@@ -226,6 +250,34 @@ export function ScheduledJobsPage() {
   }
 
   const selectedTemplate = inferTemplate(selectedJob);
+  const dispatches = dispatchesQuery.data ?? [];
+  const latestDispatch = dispatches[0];
+  const runningDispatchCount = dispatches.filter(
+    (item) => item.status === "PENDING" || item.status === "DISPATCHED" || item.status === "RUNNING",
+  ).length;
+  const failedDispatchCount = dispatches.filter((item) => item.status === "FAILED" || item.status === "TIMEOUT").length;
+  const successfulDispatchCount = dispatches.filter((item) => item.status === "SUCCESS").length;
+  const dispatchActivityItems = dispatches.slice(0, 8).map((dispatch) => ({
+    key: dispatch.id,
+    title: (
+      <Space wrap size={[8, 4]}>
+        <Typography.Text strong>{dispatch.taskId}</Typography.Text>
+        {dispatch.source ? (
+          <Tag color={getTaskDispatchSourceMeta(dispatch.source).color}>{getTaskDispatchSourceMeta(dispatch.source).label}</Tag>
+        ) : null}
+      </Space>
+    ),
+    description: formatExecutionTimeline(dispatch),
+    meta: `${formatTaskExecutionPolicy(dispatch)}${dispatch.status ? ` · 状态 ${dispatch.status}` : ""}`,
+    extra: (
+      <Space wrap size={[8, 4]}>
+        {dispatch.status ? <StatusBadge status={dispatch.status} /> : null}
+        <Button size="small" type="link" onClick={() => navigate(`/tasks/${dispatch.taskId}`)}>
+          查看任务
+        </Button>
+      </Space>
+    ),
+  }));
 
   return (
     <PermissionGuard permission="scheduler.view" forbiddenPage>
@@ -368,6 +420,34 @@ export function ScheduledJobsPage() {
               title={selectedJob?.name}
               subtitle={selectedJob?.type}
               status={selectedJob ? <StatusBadge status={selectedJob.enabled ? "ACTIVE" : "DISABLED"} /> : undefined}
+              emptyTitle="选择一条调度任务"
+              emptyDescription="从左侧选择调度任务后，这里会显示它的执行计划、最近派发和任务追踪入口。"
+              highlights={
+                selectedJob
+                  ? [
+                      {
+                        label: "最近派发",
+                        value: latestDispatch?.status ? <StatusBadge status={latestDispatch.status} /> : "尚无记录",
+                        helper: latestDispatch?.queuedAt ? formatDateTime(latestDispatch.queuedAt) : "等待首次触发",
+                      },
+                      {
+                        label: "执行中",
+                        value: runningDispatchCount,
+                        helper: runningDispatchCount > 0 ? "仍有派发在队列或执行中" : "当前没有执行中的派发",
+                      },
+                      {
+                        label: "最近成功",
+                        value: successfulDispatchCount,
+                        helper: successfulDispatchCount > 0 ? "最近派发里包含成功执行记录" : "最近暂无成功执行",
+                      },
+                      {
+                        label: "最近失败",
+                        value: failedDispatchCount,
+                        helper: failedDispatchCount > 0 ? "建议继续进入任务详情查看失败原因" : "最近没有失败/超时派发",
+                      },
+                    ]
+                  : []
+              }
               meta={
                 selectedJob
                   ? [
@@ -414,7 +494,48 @@ export function ScheduledJobsPage() {
                       <Typography.Text type="secondary">
                         建议将同类高风险任务收敛到稳定的并发键，避免同一资源被重复触发。
                       </Typography.Text>
+                      {latestDispatch ? (
+                        <Alert
+                          style={{ marginTop: 12 }}
+                          type={failedDispatchCount > 0 ? "warning" : runningDispatchCount > 0 ? "info" : "success"}
+                          showIcon
+                          message="最近一次派发"
+                          description={
+                            <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                              <Space wrap size={[8, 4]}>
+                                {latestDispatch.status ? <StatusBadge status={latestDispatch.status} /> : null}
+                                <Typography.Text type="secondary">{formatExecutionTimeline(latestDispatch)}</Typography.Text>
+                              </Space>
+                              <Typography.Text type="secondary">{formatTaskExecutionPolicy(latestDispatch)}</Typography.Text>
+                              <Button type="link" style={{ padding: 0, alignSelf: "flex-start" }} onClick={() => navigate(`/tasks/${latestDispatch.taskId}`)}>
+                                进入任务详情
+                              </Button>
+                            </Space>
+                          }
+                        />
+                      ) : null}
                     </div>
+                  </div>
+                  <div className="resource-detail-section">
+                    <ResourceActivityList
+                      title="最近派发"
+                      helper="把调度任务最近触发出来的派发和执行任务收在一起，便于从计划层直接追到执行层。"
+                      actionLabel={selectedJob.targetType || selectedJob.targetId ? "查看相关任务" : undefined}
+                      onActionClick={
+                        selectedJob.targetType || selectedJob.targetId
+                          ? () =>
+                              navigate(
+                                `/tasks?resourceType=${encodeURIComponent(selectedJob.targetType || "")}&resourceId=${encodeURIComponent(selectedJob.targetId || "")}&dispatchSource=SCHEDULED`,
+                              )
+                          : undefined
+                      }
+                      items={dispatchActivityItems}
+                      emptyText={
+                        dispatchesQuery.isLoading
+                          ? "正在加载最近派发记录..."
+                          : "当前调度任务还没有派发记录，等待下一次触发后会在这里出现。"
+                      }
+                    />
                   </div>
                   <div className="resource-detail-section">
                     <div className="resource-subpanel">

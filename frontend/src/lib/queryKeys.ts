@@ -41,6 +41,7 @@ export const queryKeys = {
   tasks: ["tasks"] as const,
   task: (taskId: string) => ["task", taskId] as const,
   scheduledJobs: ["scheduledJobs"] as const,
+  scheduledJobDispatches: (jobId: string) => ["scheduledJobDispatches", jobId] as const,
   audits: ["audits"] as const,
   terminal: (sessionId: string) => ["terminal", sessionId] as const,
 };
