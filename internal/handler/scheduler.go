@@ -24,6 +24,7 @@ func (h *SchedulerHandler) RegisterRoutes(r gin.IRouter, rbacService *rbac.Servi
 	r.GET("/scheduled-jobs", rbac.RequirePermission(rbacService, "scheduler.view"), h.List)
 	r.POST("/scheduled-jobs", rbac.RequirePermission(rbacService, "scheduler.manage"), h.Create)
 	r.GET("/scheduled-jobs/:id", rbac.RequirePermission(rbacService, "scheduler.view"), h.Get)
+	r.GET("/scheduled-jobs/:id/dispatches", rbac.RequirePermission(rbacService, "scheduler.view"), h.Dispatches)
 	r.PATCH("/scheduled-jobs/:id", rbac.RequirePermission(rbacService, "scheduler.manage"), h.Update)
 	r.DELETE("/scheduled-jobs/:id", rbac.RequirePermission(rbacService, "scheduler.manage"), h.Delete)
 }
@@ -61,6 +62,20 @@ func (h *SchedulerHandler) Get(c *gin.Context) {
 		return
 	}
 	OK(c, item)
+}
+
+func (h *SchedulerHandler) Dispatches(c *gin.Context) {
+	if _, err := h.service.Get(c.Request.Context(), c.Param("id")); err != nil {
+		Error(c, http.StatusNotFound, err.Error())
+		return
+	}
+	limit, offset := Pagination(c)
+	items, total, err := h.service.ListDispatches(c.Request.Context(), c.Param("id"), limit, offset)
+	if err != nil {
+		Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	OK(c, PageResult{Items: items, Total: total, Limit: limit, Offset: offset})
 }
 
 func (h *SchedulerHandler) Update(c *gin.Context) {

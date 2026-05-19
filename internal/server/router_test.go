@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
 	"go.uber.org/zap"
 )
 
@@ -1249,6 +1251,48 @@ func TestSecuritySchedulerRoutesSmoke(t *testing.T) {
 	getJob := performRequest(router, http.MethodGet, "/api/scheduled-jobs/"+jobID, nil, adminToken)
 	if getJob.Code != http.StatusOK {
 		t.Fatalf("GET /api/scheduled-jobs/:id status = %d, want %d; body=%s", getJob.Code, http.StatusOK, getJob.Body.String())
+	}
+
+	due := time.Now().UTC().Add(-time.Minute)
+	if err := database.Model(&model.ScheduledJob{}).Where("id = ?", jobID).Update("next_run_at", &due).Error; err != nil {
+		t.Fatalf("mark scheduled job due: %v", err)
+	}
+	schedulerService := schedulersvc.NewService(database)
+	dispatches, err := schedulerService.DispatchDueJobs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DispatchDueJobs: %v", err)
+	}
+	if len(dispatches) != 1 {
+		t.Fatalf("dispatches len = %d, want 1", len(dispatches))
+	}
+	listDispatches := performRequest(router, http.MethodGet, "/api/scheduled-jobs/"+jobID+"/dispatches", nil, adminToken)
+	if listDispatches.Code != http.StatusOK {
+		t.Fatalf("GET /api/scheduled-jobs/:id/dispatches status = %d, want %d; body=%s", listDispatches.Code, http.StatusOK, listDispatches.Body.String())
+	}
+	var dispatchPayload struct {
+		Data struct {
+			Items []model.TaskDispatch `json:"items"`
+			Total int64                `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listDispatches.Body.Bytes(), &dispatchPayload); err != nil {
+		t.Fatalf("decode dispatch list: %v; body=%s", err, listDispatches.Body.String())
+	}
+	if dispatchPayload.Data.Total != 1 || len(dispatchPayload.Data.Items) != 1 || dispatchPayload.Data.Items[0].ID != dispatches[0].ID {
+		t.Fatalf("unexpected dispatch list payload: %+v", dispatchPayload.Data)
+	}
+	getTask := performRequest(router, http.MethodGet, "/api/tasks/"+dispatches[0].TaskID, nil, adminToken)
+	if getTask.Code != http.StatusOK {
+		t.Fatalf("GET /api/tasks/:id status = %d, want %d; body=%s", getTask.Code, http.StatusOK, getTask.Body.String())
+	}
+	var taskPayload struct {
+		Data model.Task `json:"data"`
+	}
+	if err := json.Unmarshal(getTask.Body.Bytes(), &taskPayload); err != nil {
+		t.Fatalf("decode task detail: %v; body=%s", err, getTask.Body.String())
+	}
+	if len(taskPayload.Data.Dispatches) != 1 || taskPayload.Data.Dispatches[0].JobID != jobID {
+		t.Fatalf("task dispatches = %+v, want scheduled dispatch for job %s", taskPayload.Data.Dispatches, jobID)
 	}
 }
 

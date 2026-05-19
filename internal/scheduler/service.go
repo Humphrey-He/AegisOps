@@ -66,6 +66,20 @@ func (s *Service) Get(ctx context.Context, id string) (*model.ScheduledJob, erro
 	return &item, nil
 }
 
+func (s *Service) ListDispatches(ctx context.Context, jobID string, limit, offset int) ([]model.TaskDispatch, int64, error) {
+	var items []model.TaskDispatch
+	var total int64
+	query := s.db.WithContext(ctx).Model(&model.TaskDispatch{}).Where("job_id = ?", jobID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	err := query.Order("queued_at DESC, created_at DESC").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
+}
+
 func (s *Service) Create(ctx context.Context, req JobRequest) (*model.ScheduledJob, error) {
 	enabled := true
 	if req.Enabled != nil {
