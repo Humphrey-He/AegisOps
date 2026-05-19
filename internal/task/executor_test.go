@@ -28,11 +28,21 @@ func (f *fakeHostTester) TestSSH(_ context.Context, id string) error {
 	return f.err
 }
 
+type fakeDockerTester struct {
+	calledID string
+	err      error
+}
+
+func (f *fakeDockerTester) TestConnection(_ context.Context, id string) error {
+	f.calledID = id
+	return f.err
+}
+
 func TestDispatchExecutorRunsRegistryTest(t *testing.T) {
 	t.Parallel()
 
 	tester := &fakeRegistryTester{}
-	executor := NewDispatchExecutor(tester, nil)
+	executor := NewDispatchExecutor(tester, nil, nil)
 	result, err := executor(context.Background(), model.Task{
 		Type:     "registry.test",
 		TargetID: "registry-1",
@@ -52,7 +62,7 @@ func TestDispatchExecutorRunsHostSSHTest(t *testing.T) {
 	t.Parallel()
 
 	tester := &fakeHostTester{}
-	executor := NewDispatchExecutor(nil, tester)
+	executor := NewDispatchExecutor(nil, tester, nil)
 	result, err := executor(context.Background(), model.Task{
 		Type:     "host.ssh.test",
 		TargetID: "host-1",
@@ -68,11 +78,65 @@ func TestDispatchExecutorRunsHostSSHTest(t *testing.T) {
 	}
 }
 
+func TestDispatchExecutorRunsDockerNodeTest(t *testing.T) {
+	t.Parallel()
+
+	tester := &fakeDockerTester{}
+	executor := NewDispatchExecutor(nil, nil, tester)
+	result, err := executor(context.Background(), model.Task{
+		Type:     "docker.node.test",
+		TargetID: "docker-1",
+	}, model.TaskDispatch{ID: "dispatch-1"})
+	if err != nil {
+		t.Fatalf("docker executor err = %v", err)
+	}
+	if tester.calledID != "docker-1" {
+		t.Fatalf("docker tester called with %q, want docker-1", tester.calledID)
+	}
+	if result == "" {
+		t.Fatal("docker executor result is empty")
+	}
+}
+
+func TestDispatchExecutorReturnsDockerFailure(t *testing.T) {
+	t.Parallel()
+
+	tester := &fakeDockerTester{err: errors.New("docker failed")}
+	executor := NewDispatchExecutor(nil, nil, tester)
+	_, err := executor(context.Background(), model.Task{
+		Type:     "docker.node.test",
+		TargetID: "docker-1",
+	}, model.TaskDispatch{ID: "dispatch-1"})
+	if err == nil || err.Error() != "docker failed" {
+		t.Fatalf("docker executor err = %v, want docker failed", err)
+	}
+}
+
+func TestDispatchExecutorRejectsMissingDockerTarget(t *testing.T) {
+	t.Parallel()
+
+	executor := NewDispatchExecutor(nil, nil, &fakeDockerTester{})
+	_, err := executor(context.Background(), model.Task{Type: "docker.node.test"}, model.TaskDispatch{ID: "dispatch-1"})
+	if err == nil || err.Error() != "docker.node.test targetId is required" {
+		t.Fatalf("docker missing target err = %v", err)
+	}
+}
+
+func TestDispatchExecutorRejectsUnconfiguredDocker(t *testing.T) {
+	t.Parallel()
+
+	executor := NewDispatchExecutor(nil, nil, nil)
+	_, err := executor(context.Background(), model.Task{Type: "docker.node.test", TargetID: "docker-1"}, model.TaskDispatch{ID: "dispatch-1"})
+	if err == nil || err.Error() != "docker executor is not configured" {
+		t.Fatalf("docker unconfigured err = %v", err)
+	}
+}
+
 func TestDispatchExecutorReturnsHostFailure(t *testing.T) {
 	t.Parallel()
 
 	tester := &fakeHostTester{err: errors.New("ssh failed")}
-	executor := NewDispatchExecutor(nil, tester)
+	executor := NewDispatchExecutor(nil, tester, nil)
 	_, err := executor(context.Background(), model.Task{
 		Type:     "host.ssh.test",
 		TargetID: "host-1",
@@ -85,7 +149,7 @@ func TestDispatchExecutorReturnsHostFailure(t *testing.T) {
 func TestDispatchExecutorRejectsMissingHostTarget(t *testing.T) {
 	t.Parallel()
 
-	executor := NewDispatchExecutor(nil, &fakeHostTester{})
+	executor := NewDispatchExecutor(nil, &fakeHostTester{}, nil)
 	_, err := executor(context.Background(), model.Task{Type: "host.ssh.test"}, model.TaskDispatch{ID: "dispatch-1"})
 	if err == nil || err.Error() != "host.ssh.test targetId is required" {
 		t.Fatalf("host missing target err = %v", err)
@@ -95,7 +159,7 @@ func TestDispatchExecutorRejectsMissingHostTarget(t *testing.T) {
 func TestDispatchExecutorRejectsUnconfiguredHost(t *testing.T) {
 	t.Parallel()
 
-	executor := NewDispatchExecutor(nil, nil)
+	executor := NewDispatchExecutor(nil, nil, nil)
 	_, err := executor(context.Background(), model.Task{Type: "host.ssh.test", TargetID: "host-1"}, model.TaskDispatch{ID: "dispatch-1"})
 	if err == nil || err.Error() != "host executor is not configured" {
 		t.Fatalf("host unconfigured err = %v", err)
@@ -106,7 +170,7 @@ func TestDispatchExecutorReturnsRegistryFailure(t *testing.T) {
 	t.Parallel()
 
 	tester := &fakeRegistryTester{err: errors.New("registry down")}
-	executor := NewDispatchExecutor(tester, nil)
+	executor := NewDispatchExecutor(tester, nil, nil)
 	_, err := executor(context.Background(), model.Task{
 		Type:     "registry.test",
 		TargetID: "registry-1",
@@ -119,7 +183,7 @@ func TestDispatchExecutorReturnsRegistryFailure(t *testing.T) {
 func TestDispatchExecutorFallsBackToDefault(t *testing.T) {
 	t.Parallel()
 
-	executor := NewDispatchExecutor(nil, nil)
+	executor := NewDispatchExecutor(nil, nil, nil)
 	result, err := executor(context.Background(), model.Task{Type: "scheduled.noop"}, model.TaskDispatch{ID: "dispatch-1"})
 	if err != nil {
 		t.Fatalf("noop executor err = %v", err)

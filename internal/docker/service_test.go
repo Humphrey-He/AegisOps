@@ -11,17 +11,117 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/client"
+	"gorm.io/gorm"
 
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
+	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
+
+func TestWorkerExecutesDockerNodeTestDispatch(t *testing.T) {
+	database, secretService := openDockerTestServices(t)
+	service := NewService(database, secretService)
+	tasks := tasksvc.NewService(database)
+	node := model.DockerNode{
+		ID:       "docker-worker-success",
+		Name:     "Docker Worker Success",
+		Endpoint: "mock://worker-success",
+		AuthType: model.DockerAuthTypeNone,
+		Status:   model.DockerNodeStatusUnknown,
+	}
+	if err := database.Create(&node).Error; err != nil {
+		t.Fatalf("seed docker node: %v", err)
+	}
+	taskItem := model.Task{
+		ID:         "task-docker-worker-success",
+		Type:       "docker.node.test",
+		Title:      "test docker node",
+		Status:     model.TaskStatusPending,
+		TargetType: "docker_node",
+		TargetID:   node.ID,
+	}
+	if err := database.Create(&taskItem).Error; err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	dispatch := model.TaskDispatch{
+		ID:             "dispatch-docker-worker-success",
+		TaskID:         taskItem.ID,
+		Source:         model.TaskDispatchSourceScheduled,
+		Status:         model.TaskDispatchStatusPending,
+		TimeoutSeconds: 60,
+		ConcurrencyKey: "docker:" + node.ID + ":test",
+		QueuedAt:       time.Now().UTC(),
+	}
+	if err := database.Create(&dispatch).Error; err != nil {
+		t.Fatalf("seed dispatch: %v", err)
+	}
+
+	worker := tasksvc.NewWorker(tasks)
+	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
+		Owner:    "docker-test-worker",
+		Executor: tasksvc.NewDispatchExecutor(nil, nil, service),
+	})
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	var updatedNode model.DockerNode
+	if err := database.First(&updatedNode, "id = ?", node.ID).Error; err != nil {
+		t.Fatalf("load docker node: %v", err)
+	}
+	if updatedNode.Status != model.DockerNodeStatusOnline || updatedNode.LastTestAt == nil {
+		t.Fatalf("docker node status = %s lastTestAt=%v, want ONLINE with timestamp", updatedNode.Status, updatedNode.LastTestAt)
+	}
+	var updatedTask model.Task
+	if err := database.First(&updatedTask, "id = ?", taskItem.ID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	if updatedTask.Status != model.TaskStatusSuccess || updatedTask.Result == "" {
+		t.Fatalf("task after docker dispatch = %+v", updatedTask)
+	}
+	var updatedDispatch model.TaskDispatch
+	if err := database.First(&updatedDispatch, "id = ?", dispatch.ID).Error; err != nil {
+		t.Fatalf("load dispatch: %v", err)
+	}
+	if updatedDispatch.Status != model.TaskDispatchStatusSuccess || updatedDispatch.FinishedAt == nil {
+		t.Fatalf("dispatch after docker test = %+v", updatedDispatch)
+	}
+}
+
+func openDockerTestServices(t *testing.T) (*gorm.DB, *secretsvc.Service) {
+	t.Helper()
+
+	database, err := db.Open(config.DatabaseConfig{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "aegisops.db"),
+	})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	secretService, err := secretsvc.NewService(database, "test-master-key")
+	if err != nil {
+		t.Fatalf("new secret service: %v", err)
+	}
+	return database, secretService
+}
 
 func TestDockerTLSConfigFromSecretJSON(t *testing.T) {
 	secretValue := newTestDockerTLSSecret(t, false)

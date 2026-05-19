@@ -193,7 +193,7 @@ func TestWorkerExecutesHostSSHDispatchFailure(t *testing.T) {
 	worker := tasksvc.NewWorker(tasks)
 	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
 		Owner:    "host-test-worker",
-		Executor: tasksvc.NewDispatchExecutor(nil, service),
+		Executor: tasksvc.NewDispatchExecutor(nil, service, nil),
 	})
 	if err != nil {
 		t.Fatalf("worker RunOnce: %v", err)
