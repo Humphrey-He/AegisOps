@@ -42,6 +42,7 @@ import type {
   Secret,
   SecretInputPayload,
   Task,
+  TaskContext,
   TaskLogLevel,
   TaskStep,
   TaskStatus,
@@ -247,6 +248,75 @@ function setTaskTimeline(
 
 function setAuditTimeline(audit: AuditLog, minutesAgo: number) {
   audit.createdAt = timestampMinutesAgo(minutesAgo);
+}
+
+function buildResourceDetailPath(resourceType?: string, resourceId?: string) {
+  const selected = resourceId ? `?selected=${encodeURIComponent(resourceId)}` : "";
+  switch ((resourceType ?? "").toLowerCase()) {
+    case "host":
+      return `/assets/hosts${selected}`;
+    case "docker_node":
+    case "docker":
+      return `/docker/nodes${selected}`;
+    case "nginx_node":
+    case "nginx":
+      return `/nginx/nodes${selected}`;
+    case "registry":
+      return `/delivery/registries${selected}`;
+    case "service":
+      return `/delivery/services${selected}`;
+    default:
+      return "/tasks";
+  }
+}
+
+function buildTaskContextActions(resourceType?: string, hasOpenAlert?: boolean) {
+  switch ((resourceType ?? "").toLowerCase()) {
+    case "host":
+      return [
+        {
+          key: "test_ssh",
+          label: "回到主机工作台",
+          kind: "primary",
+          permission: "hosts.test",
+          path: "/assets/hosts",
+          reason: hasOpenAlert ? "建议先重新验证 SSH 连通性，再判断是否继续处理告警。" : "适合继续查看主机可用性和终端入口。",
+        },
+      ];
+    case "nginx_node":
+      return [
+        {
+          key: "test_config",
+          label: "回到 Nginx 工作台",
+          kind: "primary",
+          permission: "nginx.test",
+          path: "/nginx/nodes",
+          reason: hasOpenAlert ? "建议先测试配置链路，再决定是否重载或回滚版本。" : "适合继续查看配置版本和最近操作。",
+        },
+      ];
+    case "service":
+      return [
+        {
+          key: "view_service",
+          label: "回到服务工作台",
+          kind: "primary",
+          permission: "services.view",
+          path: "/delivery/services",
+          reason: hasOpenAlert ? "建议结合发布记录、健康检查和回滚建议继续处理。" : "适合继续查看发布、实例和最近变更。",
+        },
+      ];
+    default:
+      return [
+        {
+          key: "back_to_tasks",
+          label: "返回任务中心",
+          kind: "secondary",
+          permission: "tasks.view",
+          path: "/tasks",
+          reason: "当前资源类型没有更细的 mock 动作，先回到任务中心继续跟进。",
+        },
+      ];
+  }
 }
 
 function createStoredDb(): MockDb {
@@ -4839,6 +4909,96 @@ export const mockService = {
       });
     }
     return delay(task);
+  },
+
+  async getTaskContext(token: string | null, taskId: string) {
+    const db = readDb();
+    requirePermission(token, "tasks.view", db);
+    const task = db.tasks.find((item) => item.id === taskId);
+    if (!task) {
+      throw new ApiError({
+        status: 404,
+        code: "NOT_FOUND",
+        message: "任务不存在。",
+        traceId: traceId(),
+      });
+    }
+
+    const resourceType = task.resourceType ?? "";
+    const resourceId = task.resourceId ?? "";
+    const relatedTasks = resourceType && resourceId
+      ? db.tasks
+          .filter((item) => matchesResourceType(item.resourceType, resourceType) && matchesResourceId(item.resourceId ?? "", resourceId))
+          .slice(0, 10)
+      : [];
+    const relatedAudits = resourceType && resourceId
+      ? db.audits
+          .filter((item) => matchesResourceType(item.resourceType, resourceType) && matchesResourceId(item.resourceId ?? "", resourceId))
+          .slice(0, 10)
+      : [];
+    const relatedAlerts = resourceType && resourceId
+      ? db.alertEvents
+          .filter((item) => matchesResourceType(item.resourceType, resourceType) && matchesResourceId(item.resourceId ?? "", resourceId))
+          .slice(0, 10)
+      : [];
+    const notifications = db.notificationRecords
+      .filter((record) => relatedAlerts.some((event) => event.id === record.eventId))
+      .slice(0, 10);
+
+    const openAlertCount = relatedAlerts.filter((item) => item.status === "OPEN" || item.status === "ACKED").length;
+    const failedTaskCount = relatedTasks.filter((item) => item.status === "FAILED").length;
+    const highRiskAuditCount = relatedAudits.filter((item) => item.result === "FAILED").length;
+    const lastFailureReason =
+      task.summary ||
+      task.logs.find((item) => item.level === "ERROR")?.message ||
+      task.steps.find((item) => item.status === "FAILED")?.detail;
+
+    const riskLevel = openAlertCount > 0 ? "critical" : failedTaskCount > 0 || highRiskAuditCount > 0 ? "warning" : "normal";
+    const riskSummary =
+      riskLevel === "critical"
+        ? "存在待处理告警，建议优先确认影响范围。"
+        : riskLevel === "warning"
+          ? "存在失败任务或高风险操作，建议回看最近变更与执行结果。"
+          : "当前资源暂无待处理风险。";
+
+    const taskContext: TaskContext = {
+      task,
+      resource: resourceType && resourceId
+        ? {
+            resourceType,
+            resourceId,
+            name: task.target || resourceId,
+            status: relatedAlerts[0]?.status === "OPEN" ? "OPEN" : "ACTIVE",
+            endpoint: resourceId,
+            updatedAt: task.finishedAt || task.startedAt || task.createdAt,
+            resource: undefined,
+          }
+        : undefined,
+      navigation: {
+        detailPath: resourceType && resourceId
+          ? buildResourceDetailPath(resourceType, resourceId)
+          : "/tasks",
+        tasksPath: resourceType && resourceId ? `/tasks?resourceType=${encodeURIComponent(resourceType)}&resourceId=${encodeURIComponent(resourceId)}` : "/tasks",
+        auditsPath: resourceType && resourceId ? `/audits?resourceType=${encodeURIComponent(resourceType)}&resourceId=${encodeURIComponent(resourceId)}` : "/audits",
+        alertsPath: resourceType && resourceId ? `/alerts/events?resourceType=${encodeURIComponent(resourceType)}&resourceId=${encodeURIComponent(resourceId)}` : "/alerts/events",
+      },
+      risk: {
+        level: riskLevel,
+        summary: riskSummary,
+        openAlertCount,
+        failedTaskCount,
+        highRiskAuditCount,
+        lastFailureReason,
+      },
+      relatedTasks,
+      relatedAudits,
+      relatedAlerts,
+      notifications,
+      failureSummary: lastFailureReason,
+      nextActions: buildTaskContextActions(resourceType, relatedAlerts[0]?.status === "OPEN"),
+    };
+
+    return delay(taskContext);
   },
 
   async listAudits(

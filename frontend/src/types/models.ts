@@ -510,6 +510,54 @@ export type AuditLog = {
   summary: string;
 };
 
+export type ResourceSummary = {
+  resourceType: string;
+  resourceId: string;
+  name: string;
+  status: string;
+  endpoint?: string;
+  updatedAt: string;
+  resource?: unknown;
+};
+
+export type ResourceNavigation = {
+  detailPath: string;
+  tasksPath: string;
+  auditsPath: string;
+  alertsPath: string;
+};
+
+export type ResourceRisk = {
+  level: "critical" | "warning" | "normal" | string;
+  summary: string;
+  openAlertCount: number;
+  failedTaskCount: number;
+  highRiskAuditCount: number;
+  lastFailureReason?: string;
+};
+
+export type ResourceActionHint = {
+  key: string;
+  label: string;
+  kind: "primary" | "secondary" | string;
+  permission?: string;
+  path?: string;
+  reason?: string;
+};
+
+export type TaskContext = {
+  task?: Task;
+  resource?: ResourceSummary;
+  navigation: ResourceNavigation;
+  risk: ResourceRisk;
+  relatedTasks: Task[];
+  relatedAudits: AuditLog[];
+  relatedAlerts: AlertEvent[];
+  notifications: NotificationRecord[];
+  failureSummary?: string;
+  nextActions: ResourceActionHint[];
+};
+
 export type DashboardSummary = {
   userCount: number;
   hostCount: number;

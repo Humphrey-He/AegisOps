@@ -26,7 +26,7 @@ export function LoginPage() {
     mutationFn: authApi.login,
     onSuccess: async (result) => {
       setSession(result);
-      await message.success(`欢迎回来，${result.user.displayName}`);
+      void message.success(`欢迎回来，${result.user.displayName}`);
       navigate(targetPath, { replace: true });
     },
     onError: (error) => {

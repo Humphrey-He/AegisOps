@@ -27,6 +27,10 @@ import type {
   NginxConfigVersion,
   NginxNode,
   NginxNodeInput,
+  ResourceActionHint,
+  ResourceNavigation,
+  ResourceRisk,
+  ResourceSummary,
   RollbackSuggestion,
   Role,
   RoleInput,
@@ -52,6 +56,7 @@ import type {
   ScheduledJobInput,
   SetupStatus,
   Task,
+  TaskContext,
   TerminalSession,
   User,
   UserInput,
@@ -391,6 +396,12 @@ type BackendDashboardSummary = {
   dockerNodeCount: number;
   containerCount: number;
   unhealthyResourceCount: number;
+  openAlertCount?: number;
+  failedTaskCount?: number;
+  highRiskAuditCount?: number;
+  openAlerts?: BackendAlertEvent[];
+  failedTasks?: BackendTask[];
+  highRiskAudits?: BackendAuditLog[];
   recentTasks: BackendTask[];
   recentAudits: BackendAuditLog[];
 };
@@ -402,6 +413,54 @@ type BackendResourceContext = {
   recentTasks?: BackendTask[];
   recentAudits?: BackendAuditLog[];
   recentAlerts?: BackendAlertEvent[];
+};
+
+type BackendResourceSummary = {
+  resourceType: string;
+  resourceId: string;
+  name: string;
+  status: string;
+  endpoint?: string;
+  updatedAt: string;
+  resource?: unknown;
+};
+
+type BackendResourceNavigation = {
+  detailPath: string;
+  tasksPath: string;
+  auditsPath: string;
+  alertsPath: string;
+};
+
+type BackendResourceRisk = {
+  level: string;
+  summary: string;
+  openAlertCount: number;
+  failedTaskCount: number;
+  highRiskAuditCount: number;
+  lastFailureReason?: string;
+};
+
+type BackendResourceActionHint = {
+  key: string;
+  label: string;
+  kind: string;
+  permission?: string;
+  path?: string;
+  reason?: string;
+};
+
+type BackendTaskContext = {
+  task?: BackendTask;
+  resource?: BackendResourceSummary;
+  navigation?: BackendResourceNavigation;
+  risk?: BackendResourceRisk;
+  relatedTasks?: BackendTask[];
+  relatedAudits?: BackendAuditLog[];
+  relatedAlerts?: BackendAlertEvent[];
+  notifications?: BackendNotificationRecord[];
+  failureSummary?: string;
+  nextActions?: BackendResourceActionHint[];
 };
 
 type BackendServiceHealthCheck = {
@@ -1145,8 +1204,68 @@ function mapBackendDashboardSummary(summary: BackendDashboardSummary): Dashboard
     dockerNodeCount: summary.dockerNodeCount ?? 0,
     containerCount: summary.containerCount ?? 0,
     unhealthyResourceCount: summary.unhealthyResourceCount ?? 0,
+    openAlertCount: summary.openAlertCount ?? 0,
+    recentAlertEvents: (summary.openAlerts ?? []).map(mapAlertEvent),
     recentTasks: (summary.recentTasks ?? []).map(mapBackendTask),
     recentAudits: (summary.recentAudits ?? []).map(mapBackendAudit),
+  };
+}
+
+function mapResourceSummary(summary: BackendResourceSummary): ResourceSummary {
+  return {
+    resourceType: summary.resourceType,
+    resourceId: summary.resourceId,
+    name: summary.name,
+    status: summary.status,
+    endpoint: summary.endpoint,
+    updatedAt: summary.updatedAt,
+    resource: summary.resource,
+  };
+}
+
+function mapResourceNavigation(navigation?: BackendResourceNavigation): ResourceNavigation {
+  return {
+    detailPath: navigation?.detailPath ?? "/dashboard",
+    tasksPath: navigation?.tasksPath ?? "/tasks",
+    auditsPath: navigation?.auditsPath ?? "/audits",
+    alertsPath: navigation?.alertsPath ?? "/alerts/events",
+  };
+}
+
+function mapResourceRisk(risk?: BackendResourceRisk): ResourceRisk {
+  return {
+    level: risk?.level ?? "normal",
+    summary: risk?.summary ?? "当前资源暂无待处理风险。",
+    openAlertCount: risk?.openAlertCount ?? 0,
+    failedTaskCount: risk?.failedTaskCount ?? 0,
+    highRiskAuditCount: risk?.highRiskAuditCount ?? 0,
+    lastFailureReason: risk?.lastFailureReason,
+  };
+}
+
+function mapResourceActionHint(hint: BackendResourceActionHint): ResourceActionHint {
+  return {
+    key: hint.key,
+    label: hint.label,
+    kind: hint.kind,
+    permission: hint.permission,
+    path: hint.path,
+    reason: hint.reason,
+  };
+}
+
+function mapTaskContext(context: BackendTaskContext): TaskContext {
+  return {
+    task: context.task ? mapBackendTask(context.task) : undefined,
+    resource: context.resource ? mapResourceSummary(context.resource) : undefined,
+    navigation: mapResourceNavigation(context.navigation),
+    risk: mapResourceRisk(context.risk),
+    relatedTasks: (context.relatedTasks ?? []).map(mapBackendTask),
+    relatedAudits: (context.relatedAudits ?? []).map(mapBackendAudit),
+    relatedAlerts: (context.relatedAlerts ?? []).map(mapAlertEvent),
+    notifications: (context.notifications ?? []).map(mapNotificationRecord),
+    failureSummary: context.failureSummary,
+    nextActions: (context.nextActions ?? []).map(mapResourceActionHint),
   };
 }
 
@@ -1946,17 +2065,24 @@ export const tasksApi = {
     const page = await http.get<BackendPage<BackendTask>>(query ? `/tasks?${query}` : "/tasks");
     return pageItems(page).map(mapBackendTask);
   },
-  detail: async (taskId: string): Promise<Task> => {
-    if (USE_MOCK) {
-      return mockService.getTask(token(), taskId);
-    }
-    const task = await http.get<BackendTask>(`/tasks/${taskId}`);
-    return mapBackendTask(task);
-  },
-  cancel: async (taskId: string): Promise<{ canceled: boolean }> => {
-    if (USE_MOCK) {
-      throw new Error("Mock 模式暂不支持取消任务");
-    }
+    detail: async (taskId: string): Promise<Task> => {
+      if (USE_MOCK) {
+        return mockService.getTask(token(), taskId);
+      }
+      const task = await http.get<BackendTask>(`/tasks/${taskId}`);
+      return mapBackendTask(task);
+    },
+    context: async (taskId: string): Promise<TaskContext> => {
+      if (USE_MOCK) {
+        return mockService.getTaskContext(token(), taskId);
+      }
+      const context = await http.get<BackendTaskContext>(`/tasks/${taskId}/context`);
+      return mapTaskContext(context);
+    },
+    cancel: async (taskId: string): Promise<{ canceled: boolean }> => {
+      if (USE_MOCK) {
+        throw new Error("Mock 模式暂不支持取消任务");
+      }
     return http.post<{ canceled: boolean }>(`/tasks/${taskId}/cancel`);
   },
   retry: async (taskId: string): Promise<Task> => {
