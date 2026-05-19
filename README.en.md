@@ -4,7 +4,7 @@
 
 `AegisOps` is a DevOps platform focused on a lightweight operations control plane, application delivery, and stability management.
 
-The latest formal release in this repository is `v1.0.0`. At this stage, the project is no longer a scaffold. It already provides a runnable phase-one baseline with real backend APIs, a usable frontend console, local demo data, and clear phase-two planning.
+The latest formal release in this repository is `v1.5.12`. At this stage, the project is no longer a scaffold. It already provides a runnable and stable baseline with real backend APIs, a usable frontend console, local demo data, and clear phase-two planning.
 
 ## Positioning
 
@@ -34,9 +34,9 @@ Current boundaries should also be stated honestly:
 - fine-grained permission evolution, secret lifecycle management, advanced scheduling, and real external notification integrations still belong to the next stage
 - more long-running verification against real hosts, Docker, Nginx, and notification targets is still worthwhile for heavier production use
 
-In short: this is a solid `v1.0.0` backend-driven DevOps control-plane project with good product direction and a credible extension path.
+In short: this is a solid `v1.5.12` backend-driven DevOps control-plane project with good product direction and a credible extension path.
 
-## What v1.0.0 Includes
+## What v1.5.12 Includes
 
 ### Backend capabilities
 
@@ -273,6 +273,6 @@ Recommended core documents:
 
 The repository can now be described as:
 
-- a completed `v1.0.0` formal release baseline
+- a completed `v1.5.12` formal release baseline
 - ready for local execution, demos, API integration, and phase-two development
-- moving from phase-one scaffolding and closure into production hardening and focused phase-two enhancements
+- moving from `v1.5.x` stabilization into production hardening and focused phase-two enhancements
