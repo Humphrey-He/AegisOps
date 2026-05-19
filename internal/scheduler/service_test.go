@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +11,8 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	registrysvc "github.com/Humphrey-He/AegisOps/internal/registry"
+	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
 
@@ -142,6 +146,82 @@ func TestDispatchDueJobsCanBeConsumedByLocalWorker(t *testing.T) {
 	}
 	if loadedTask.Status != model.TaskStatusSuccess || len(loadedTask.Dispatches) != 1 || loadedTask.Dispatches[0].Status != model.TaskDispatchStatusSuccess {
 		t.Fatalf("task after worker = %+v dispatches=%+v", loadedTask, loadedTask.Dispatches)
+	}
+}
+
+func TestDispatchDueRegistryJobCanBeConsumedByLocalWorker(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t)
+	defer cleanup()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	registry := model.Registry{
+		ID:       "registry-scheduled",
+		Name:     "Scheduled Registry",
+		URL:      server.URL,
+		AuthType: model.RegistryAuthTypeNone,
+		Status:   model.RegistryStatusUnknown,
+	}
+	if err := service.db.Create(&registry).Error; err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	now := time.Date(2026, 5, 18, 10, 0, 30, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	job, err := service.Create(context.Background(), JobRequest{
+		Name:       "Registry Sweep",
+		Type:       "registry.test",
+		CronExpr:   "*/5 * * * *",
+		TargetType: "registry",
+		TargetID:   registry.ID,
+		OperatorID: "1",
+	})
+	if err != nil {
+		t.Fatalf("Create scheduled job: %v", err)
+	}
+	due := now.Add(-time.Minute)
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id = ?", job.ID).Update("next_run_at", &due).Error; err != nil {
+		t.Fatalf("mark job due: %v", err)
+	}
+	dispatches, err := service.DispatchDueJobs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DispatchDueJobs: %v", err)
+	}
+	if len(dispatches) != 1 {
+		t.Fatalf("dispatches len = %d, want 1", len(dispatches))
+	}
+	secretService, err := secretsvc.NewService(service.db, "test-secret-key")
+	if err != nil {
+		t.Fatalf("new secret service: %v", err)
+	}
+	registryService := registrysvc.NewService(service.db, secretService)
+	taskService := tasksvc.NewService(service.db)
+	worker := tasksvc.NewWorker(taskService)
+	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
+		Owner:    "scheduler-registry-worker",
+		Executor: tasksvc.NewDispatchExecutor(registryService),
+	})
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	loadedTask, err := taskService.Get(context.Background(), dispatches[0].TaskID)
+	if err != nil {
+		t.Fatalf("task get: %v", err)
+	}
+	if loadedTask.Status != model.TaskStatusSuccess || len(loadedTask.Dispatches) != 1 || loadedTask.Dispatches[0].Status != model.TaskDispatchStatusSuccess {
+		t.Fatalf("task after registry worker = %+v dispatches=%+v", loadedTask, loadedTask.Dispatches)
+	}
+	var updatedRegistry model.Registry
+	if err := service.db.First(&updatedRegistry, "id = ?", registry.ID).Error; err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if updatedRegistry.Status != model.RegistryStatusOnline || updatedRegistry.LastTestAt == nil {
+		t.Fatalf("registry status = %s lastTestAt=%v, want ONLINE with timestamp", updatedRegistry.Status, updatedRegistry.LastTestAt)
 	}
 }
 

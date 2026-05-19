@@ -13,7 +13,9 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/db"
 	"github.com/Humphrey-He/AegisOps/internal/logger"
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	registrysvc "github.com/Humphrey-He/AegisOps/internal/registry"
 	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
+	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
 	"github.com/Humphrey-He/AegisOps/internal/server"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 	"go.uber.org/zap"
@@ -43,6 +45,11 @@ func main() {
 
 	router := server.NewRouter(cfg, database, log)
 	schedulerService := schedulersvc.NewService(database)
+	secretService, err := secretsvc.NewService(database, cfg.Security.SecretKey)
+	if err != nil {
+		log.Fatal("initialize secret service", zap.Error(err))
+	}
+	registryService := registrysvc.NewService(database, secretService)
 	taskService := tasksvc.NewService(database)
 	dispatchWorker := tasksvc.NewWorker(taskService)
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
@@ -61,6 +68,7 @@ func main() {
 		Interval: time.Minute,
 		Limit:    20,
 		Owner:    "aegisops-api",
+		Executor: tasksvc.NewDispatchExecutor(registryService),
 		OnError: func(err error) {
 			log.Warn("task dispatch worker failed", zap.Error(err))
 		},
