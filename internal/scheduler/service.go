@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,6 +17,13 @@ import (
 type Service struct {
 	db  *gorm.DB
 	now func() time.Time
+}
+
+type RunOptions struct {
+	Interval   time.Duration
+	Limit      int
+	OnError    func(error)
+	OnDispatch func([]model.TaskDispatch)
 }
 
 type JobRequest struct {
@@ -150,16 +158,49 @@ func (s *Service) DispatchDueJobs(ctx context.Context, limit int) ([]model.TaskD
 		return nil, err
 	}
 	dispatches := make([]model.TaskDispatch, 0, len(jobs))
+	errs := make([]error, 0)
 	for _, job := range jobs {
 		dispatch, err := s.enqueueJobRun(ctx, job, now)
 		if err != nil {
-			return nil, err
+			errs = append(errs, fmt.Errorf("dispatch scheduled job %s: %w", job.ID, err))
+			continue
 		}
 		if dispatch != nil {
 			dispatches = append(dispatches, *dispatch)
 		}
 	}
-	return dispatches, nil
+	return dispatches, errors.Join(errs...)
+}
+
+func (s *Service) Run(ctx context.Context, opts RunOptions) {
+	interval := opts.Interval
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	runOnce := func() {
+		dispatches, err := s.DispatchDueJobs(ctx, limit)
+		if err != nil && opts.OnError != nil {
+			opts.OnError(err)
+		}
+		if len(dispatches) > 0 && opts.OnDispatch != nil {
+			opts.OnDispatch(dispatches)
+		}
+	}
+	runOnce()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runOnce()
+		}
+	}
 }
 
 func (s *Service) enqueueJobRun(ctx context.Context, job model.ScheduledJob, now time.Time) (*model.TaskDispatch, error) {

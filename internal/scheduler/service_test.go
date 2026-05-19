@@ -141,6 +141,175 @@ func TestDispatchDueJobsSkipsDisabledAndDuplicateConcurrency(t *testing.T) {
 	}
 }
 
+func TestDispatchDueJobsContinuesAfterJobFailure(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t)
+	defer cleanup()
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	bad, err := service.Create(context.Background(), JobRequest{
+		Name:       "Bad Next Run",
+		Type:       "bad.next",
+		CronExpr:   "*/5 * * * *",
+		TargetType: "host",
+		TargetID:   "bad",
+	})
+	if err != nil {
+		t.Fatalf("Create bad job: %v", err)
+	}
+	good, err := service.Create(context.Background(), JobRequest{
+		Name:       "Good Next Run",
+		Type:       "good.next",
+		CronExpr:   "*/5 * * * *",
+		TargetType: "host",
+		TargetID:   "good",
+	})
+	if err != nil {
+		t.Fatalf("Create good job: %v", err)
+	}
+	due := now.Add(-time.Minute)
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id IN ?", []string{bad.ID, good.ID}).Update("next_run_at", &due).Error; err != nil {
+		t.Fatalf("mark jobs due: %v", err)
+	}
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id = ?", bad.ID).Update("cron_expr", "bad cron").Error; err != nil {
+		t.Fatalf("break bad job cron: %v", err)
+	}
+
+	dispatches, err := service.DispatchDueJobs(context.Background(), 10)
+	if err == nil {
+		t.Fatal("DispatchDueJobs err = nil, want joined job error")
+	}
+	if len(dispatches) != 1 || dispatches[0].JobID != good.ID {
+		t.Fatalf("dispatches = %+v, want only good job", dispatches)
+	}
+	var taskCount int64
+	if countErr := service.db.Model(&model.Task{}).Where("type = ?", "good.next").Count(&taskCount).Error; countErr != nil {
+		t.Fatalf("count good task: %v", countErr)
+	}
+	if taskCount != 1 {
+		t.Fatalf("good task count = %d, want 1", taskCount)
+	}
+}
+
+func TestRunDispatchesDueJobsAndStops(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t)
+	defer cleanup()
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	job, err := service.Create(context.Background(), JobRequest{
+		Name:       "Runner Job",
+		Type:       "runner.job",
+		CronExpr:   "*/5 * * * *",
+		TargetType: "host",
+		TargetID:   "runner",
+	})
+	if err != nil {
+		t.Fatalf("Create runner job: %v", err)
+	}
+	due := now.Add(-time.Minute)
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id = ?", job.ID).Update("next_run_at", &due).Error; err != nil {
+		t.Fatalf("mark job due: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dispatched := make(chan []model.TaskDispatch, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.Run(ctx, RunOptions{
+			Interval: 10 * time.Millisecond,
+			Limit:    10,
+			OnDispatch: func(items []model.TaskDispatch) {
+				select {
+				case dispatched <- items:
+				default:
+				}
+				cancel()
+			},
+			OnError: func(err error) {
+				t.Errorf("runner error: %v", err)
+				cancel()
+			},
+		})
+	}()
+
+	select {
+	case items := <-dispatched:
+		if len(items) != 1 || items[0].JobID != job.ID {
+			t.Fatalf("dispatched = %+v, want runner job", items)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for scheduler dispatch")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for scheduler runner to stop")
+	}
+}
+
+func TestRunReportsErrorsAndContinuesUntilStopped(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t)
+	defer cleanup()
+	now := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	job, err := service.Create(context.Background(), JobRequest{
+		Name:       "Broken Job",
+		Type:       "broken.job",
+		CronExpr:   "*/5 * * * *",
+		TargetType: "host",
+		TargetID:   "broken",
+	})
+	if err != nil {
+		t.Fatalf("Create broken job: %v", err)
+	}
+	due := now.Add(-time.Minute)
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id = ?", job.ID).Update("next_run_at", &due).Error; err != nil {
+		t.Fatalf("mark job due: %v", err)
+	}
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id = ?", job.ID).Update("cron_expr", "bad cron").Error; err != nil {
+		t.Fatalf("break job cron: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.Run(ctx, RunOptions{
+			Interval: 10 * time.Millisecond,
+			Limit:    10,
+			OnError: func(err error) {
+				select {
+				case errs <- err:
+				default:
+				}
+				cancel()
+			},
+		})
+	}()
+	select {
+	case err := <-errs:
+		if err == nil {
+			t.Fatal("runner error = nil, want dispatch error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for scheduler error")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for scheduler runner to stop")
+	}
+}
+
 func newTestService(t *testing.T) (*Service, func()) {
 	t.Helper()
 	database, err := db.Open(config.DatabaseConfig{

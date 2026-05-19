@@ -12,6 +12,8 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
 	"github.com/Humphrey-He/AegisOps/internal/logger"
+	"github.com/Humphrey-He/AegisOps/internal/model"
+	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
 	"github.com/Humphrey-He/AegisOps/internal/server"
 	"go.uber.org/zap"
 )
@@ -39,6 +41,19 @@ func main() {
 	}
 
 	router := server.NewRouter(cfg, database, log)
+	schedulerService := schedulersvc.NewService(database)
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	go schedulerService.Run(schedulerCtx, schedulersvc.RunOptions{
+		Interval: time.Minute,
+		Limit:    20,
+		OnError: func(err error) {
+			log.Warn("scheduled job dispatch failed", zap.Error(err))
+		},
+		OnDispatch: func(dispatches []model.TaskDispatch) {
+			log.Info("scheduled jobs dispatched", zap.Int("count", len(dispatches)))
+		},
+	})
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           router,
@@ -56,6 +71,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	stopScheduler()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
