@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -262,27 +263,7 @@ func (s *Service) TestTask(ctx context.Context, nodeID, operatorID string) (stri
 			{Name: "record nginx status", SortOrder: 3},
 		},
 	}, func(ctx context.Context, runner *nginxTaskRunner) error {
-		var node *model.NginxNode
-		if err := runner.Step("load nginx node", func(stepID string) error {
-			var err error
-			node, err = s.GetNode(ctx, nodeID)
-			return err
-		}); err != nil {
-			return err
-		}
-		if err := runner.Step("run nginx test command", func(stepID string) error {
-			output, err := s.runHostCommand(ctx, node.HostID, node.TestCommand)
-			runner.Log(stepID, model.TaskLogLevelInfo, output)
-			if err != nil {
-				s.recordNodeTestResult(ctx, nodeID, model.NginxNodeStatusOffline)
-			}
-			return err
-		}); err != nil {
-			return err
-		}
-		return runner.Step("record nginx status", func(stepID string) error {
-			return s.recordNodeTestResult(ctx, nodeID, model.NginxNodeStatusOnline)
-		})
+		return s.testNode(ctx, nodeID, runner)
 	})
 }
 
@@ -299,43 +280,26 @@ func (s *Service) ReloadTask(ctx context.Context, nodeID, operatorID string) (st
 			{Name: "run nginx reload command", SortOrder: 3},
 		},
 	}, func(ctx context.Context, runner *nginxTaskRunner) error {
-		var node *model.NginxNode
-		if err := runner.Step("load nginx node", func(stepID string) error {
-			var err error
-			node, err = s.GetNode(ctx, nodeID)
-			return err
-		}); err != nil {
-			return err
-		}
-		if err := runner.Step("run nginx test command", func(stepID string) error {
-			output, err := s.runHostCommand(ctx, node.HostID, node.TestCommand)
-			runner.Log(stepID, model.TaskLogLevelInfo, output)
-			return err
-		}); err != nil {
-			return err
-		}
-		return runner.Step("run nginx reload command", func(stepID string) error {
-			output, err := s.runHostCommand(ctx, node.HostID, node.ReloadCommand)
-			runner.Log(stepID, model.TaskLogLevelInfo, output)
-			return err
-		})
+		return s.reloadNode(ctx, nodeID, runner)
 	})
 }
 
 func (s *Service) PublishConfigTask(ctx context.Context, nodeID string, req PublishConfigRequest) (string, error) {
-	return s.applyConfigTask(ctx, nodeID, req.ConfigID, req.OperatorID, "nginx.config.publish", "publish nginx config "+nodeID)
+	return s.applyConfigTask(ctx, nodeID, req.ConfigID, req.OperatorID, "nginx.config.publish", "publish nginx config "+nodeID, false)
 }
 
 func (s *Service) RollbackTask(ctx context.Context, nodeID string, req RollbackRequest) (string, error) {
-	return s.applyConfigTask(ctx, nodeID, req.ConfigID, req.OperatorID, "nginx.config.rollback", "rollback nginx config "+nodeID)
+	return s.applyConfigTask(ctx, nodeID, req.ConfigID, req.OperatorID, "nginx.config.rollback", "rollback nginx config "+nodeID, true)
 }
 
-func (s *Service) applyConfigTask(ctx context.Context, nodeID, configID, operatorID, taskType, title string) (string, error) {
+func (s *Service) applyConfigTask(ctx context.Context, nodeID, configID, operatorID, taskType, title string, rollback bool) (string, error) {
+	payload, _ := json.Marshal(map[string]string{"configId": configID})
 	return s.runCommandTask(ctx, tasksvc.CreateRequest{
 		Type:       taskType,
 		Title:      title,
 		TargetType: "nginx_node",
 		TargetID:   nodeID,
+		Payload:    string(payload),
 		CreatedBy:  operatorID,
 		Steps: []tasksvc.CreateStepRequest{
 			{Name: "load config version", SortOrder: 1},
@@ -346,79 +310,146 @@ func (s *Service) applyConfigTask(ctx context.Context, nodeID, configID, operato
 			{Name: "activate config version", SortOrder: 6},
 		},
 	}, func(ctx context.Context, runner *nginxTaskRunner) error {
-		var node *model.NginxNode
-		var config *model.NginxConfigVersion
-		var backupPath string
-		if err := runner.Step("load config version", func(stepID string) error {
-			var err error
-			node, err = s.GetNode(ctx, nodeID)
-			if err != nil {
-				return err
-			}
-			config, err = s.GetConfig(ctx, configID)
-			if err != nil {
-				return err
-			}
-			if config.NodeID != nodeID {
-				return fmt.Errorf("config version does not belong to nginx node")
-			}
-			return nil
-		}); err != nil {
+		return s.applyConfig(ctx, nodeID, configID, rollback, runner)
+	})
+}
+
+func (s *Service) TestNode(ctx context.Context, nodeID string) error {
+	return s.testNode(ctx, nodeID, noopNginxRunner{})
+}
+
+func (s *Service) ReloadNode(ctx context.Context, nodeID string) error {
+	return s.reloadNode(ctx, nodeID, noopNginxRunner{})
+}
+
+func (s *Service) PublishConfig(ctx context.Context, nodeID, configID string) error {
+	return s.applyConfig(ctx, nodeID, configID, false, noopNginxRunner{})
+}
+
+func (s *Service) RollbackConfig(ctx context.Context, nodeID, configID string) error {
+	return s.applyConfig(ctx, nodeID, configID, true, noopNginxRunner{})
+}
+
+func (s *Service) testNode(ctx context.Context, nodeID string, runner nginxRunner) error {
+	var node *model.NginxNode
+	if err := runner.Step("load nginx node", func(stepID string) error {
+		var err error
+		node, err = s.GetNode(ctx, nodeID)
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := runner.Step("run nginx test command", func(stepID string) error {
+		output, err := s.runHostCommand(ctx, node.HostID, node.TestCommand)
+		runner.Log(stepID, model.TaskLogLevelInfo, output)
+		if err != nil {
+			s.recordNodeTestResult(ctx, nodeID, model.NginxNodeStatusOffline)
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	return runner.Step("record nginx status", func(stepID string) error {
+		return s.recordNodeTestResult(ctx, nodeID, model.NginxNodeStatusOnline)
+	})
+}
+
+func (s *Service) reloadNode(ctx context.Context, nodeID string, runner nginxRunner) error {
+	var node *model.NginxNode
+	if err := runner.Step("load nginx node", func(stepID string) error {
+		var err error
+		node, err = s.GetNode(ctx, nodeID)
+		return err
+	}); err != nil {
+		return err
+	}
+	if err := runner.Step("run nginx test command", func(stepID string) error {
+		output, err := s.runHostCommand(ctx, node.HostID, node.TestCommand)
+		runner.Log(stepID, model.TaskLogLevelInfo, output)
+		return err
+	}); err != nil {
+		return err
+	}
+	return runner.Step("run nginx reload command", func(stepID string) error {
+		output, err := s.runHostCommand(ctx, node.HostID, node.ReloadCommand)
+		runner.Log(stepID, model.TaskLogLevelInfo, output)
+		return err
+	})
+}
+
+func (s *Service) applyConfig(ctx context.Context, nodeID, configID string, _ bool, runner nginxRunner) error {
+	var node *model.NginxNode
+	var config *model.NginxConfigVersion
+	var backupPath string
+	if err := runner.Step("load config version", func(stepID string) error {
+		var err error
+		node, err = s.GetNode(ctx, nodeID)
+		if err != nil {
 			return err
 		}
-		if err := runner.Step("backup remote config", func(stepID string) error {
-			var err error
-			backupPath, err = s.writeRemoteConfig(ctx, node.HostID, node.ConfigPath, config.Content)
-			if err != nil {
-				return err
-			}
-			runner.Log(stepID, model.TaskLogLevelInfo, "remote config backup: "+backupPath)
-			return nil
-		}); err != nil {
+		config, err = s.GetConfig(ctx, configID)
+		if err != nil {
 			return err
 		}
-		if err := runner.Step("write remote config", func(stepID string) error {
-			runner.Log(stepID, model.TaskLogLevelInfo, "wrote config version "+config.Version+" to "+node.ConfigPath)
-			return nil
-		}); err != nil {
+		if config.NodeID != nodeID {
+			return fmt.Errorf("config version does not belong to nginx node")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := runner.Step("backup remote config", func(stepID string) error {
+		var err error
+		backupPath, err = s.writeRemoteConfig(ctx, node.HostID, node.ConfigPath, config.Content)
+		if err != nil {
 			return err
 		}
-		restore := func(stepID string, reason error) error {
-			restoreOutput, restoreErr := s.runHostCommand(ctx, node.HostID, "cp "+shellQuote(backupPath)+" "+shellQuote(node.ConfigPath))
-			runner.Log(stepID, model.TaskLogLevelWarn, restoreOutput)
-			if restoreErr != nil {
-				return fmt.Errorf("%w; restore remote config failed: %v", reason, restoreErr)
-			}
-			runner.Log(stepID, model.TaskLogLevelWarn, "restored remote config from backup after failure")
-			return reason
+		runner.Log(stepID, model.TaskLogLevelInfo, "remote config backup: "+backupPath)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := runner.Step("write remote config", func(stepID string) error {
+		runner.Log(stepID, model.TaskLogLevelInfo, "wrote config version "+config.Version+" to "+node.ConfigPath)
+		return nil
+	}); err != nil {
+		return err
+	}
+	restore := func(stepID string, reason error) error {
+		restoreOutput, restoreErr := s.runHostCommand(ctx, node.HostID, "cp "+shellQuote(backupPath)+" "+shellQuote(node.ConfigPath))
+		runner.Log(stepID, model.TaskLogLevelWarn, restoreOutput)
+		if restoreErr != nil {
+			return fmt.Errorf("%w; restore remote config failed: %v", reason, restoreErr)
 		}
-		if err := runner.Step("run nginx test command", func(stepID string) error {
-			output, err := s.runHostCommand(ctx, node.HostID, node.TestCommand)
-			runner.Log(stepID, model.TaskLogLevelInfo, output)
-			if err != nil {
-				return restore(stepID, err)
-			}
-			return nil
-		}); err != nil {
+		runner.Log(stepID, model.TaskLogLevelWarn, "restored remote config from backup after failure")
+		return reason
+	}
+	if err := runner.Step("run nginx test command", func(stepID string) error {
+		output, err := s.runHostCommand(ctx, node.HostID, node.TestCommand)
+		runner.Log(stepID, model.TaskLogLevelInfo, output)
+		if err != nil {
+			return restore(stepID, err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := runner.Step("run nginx reload command", func(stepID string) error {
+		output, err := s.runHostCommand(ctx, node.HostID, node.ReloadCommand)
+		runner.Log(stepID, model.TaskLogLevelInfo, output)
+		if err != nil {
+			return restore(stepID, err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return runner.Step("activate config version", func(stepID string) error {
+		if err := s.activateConfig(ctx, nodeID, configID); err != nil {
 			return err
 		}
-		if err := runner.Step("run nginx reload command", func(stepID string) error {
-			output, err := s.runHostCommand(ctx, node.HostID, node.ReloadCommand)
-			runner.Log(stepID, model.TaskLogLevelInfo, output)
-			if err != nil {
-				return restore(stepID, err)
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		return runner.Step("activate config version", func(stepID string) error {
-			if err := s.activateConfig(ctx, nodeID, configID); err != nil {
-				return err
-			}
-			runner.Log(stepID, model.TaskLogLevelInfo, "activated config version "+config.Version)
-			return nil
-		})
+		runner.Log(stepID, model.TaskLogLevelInfo, "activated config version "+config.Version)
+		return nil
 	})
 }
 
@@ -459,6 +490,11 @@ type nginxTaskRunner struct {
 	steps  map[string]string
 }
 
+type nginxRunner interface {
+	Step(string, func(string) error) error
+	Log(string, model.TaskLogLevel, string)
+}
+
 func newNginxTaskRunner(ctx context.Context, tasks *tasksvc.Service, task *model.Task) *nginxTaskRunner {
 	steps := make(map[string]string, len(task.Steps))
 	for _, step := range task.Steps {
@@ -493,6 +529,14 @@ func (r *nginxTaskRunner) Log(stepID string, level model.TaskLogLevel, message s
 	}
 	_, _ = r.tasks.AddLog(r.ctx, r.taskID, stepID, level, message)
 }
+
+type noopNginxRunner struct{}
+
+func (noopNginxRunner) Step(_ string, fn func(string) error) error {
+	return fn("")
+}
+
+func (noopNginxRunner) Log(_ string, _ model.TaskLogLevel, _ string) {}
 
 func (s *Service) recordNodeTestResult(ctx context.Context, nodeID string, status model.NginxNodeStatus) error {
 	now := time.Now().UTC()

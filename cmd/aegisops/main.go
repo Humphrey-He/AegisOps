@@ -9,15 +9,20 @@ import (
 	"syscall"
 	"time"
 
+	alertsvc "github.com/Humphrey-He/AegisOps/internal/alert"
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
 	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
+	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	hostsvc "github.com/Humphrey-He/AegisOps/internal/host"
 	"github.com/Humphrey-He/AegisOps/internal/logger"
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	nginxsvc "github.com/Humphrey-He/AegisOps/internal/nginx"
+	notificationsvc "github.com/Humphrey-He/AegisOps/internal/notification"
 	registrysvc "github.com/Humphrey-He/AegisOps/internal/registry"
 	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
 	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
+	servicesvc "github.com/Humphrey-He/AegisOps/internal/service"
 	"github.com/Humphrey-He/AegisOps/internal/server"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 	"go.uber.org/zap"
@@ -55,6 +60,17 @@ func main() {
 	dockerService := dockersvc.NewService(database, secretService)
 	registryService := registrysvc.NewService(database, secretService)
 	taskService := tasksvc.NewService(database)
+	notificationService := notificationsvc.NewService(database, secretService)
+	notificationService.SetOptions(notificationsvc.Options{TemplateVersion: cfg.Notification.TemplateVersion, PublicBaseURL: cfg.Notification.PublicBaseURL})
+	alertService := alertsvc.NewService(database, notificationService)
+	healthCheckService := healthsvc.NewService(database, alertService)
+	hostService.SetHealthCheckService(healthCheckService)
+	nginxService := nginxsvc.NewService(database, secretService, taskService)
+	nginxService.SetAlertService(alertService)
+	releaseExecutor := servicesvc.NewDockerReleaseExecutor(dockerService)
+	serviceService := servicesvc.NewService(database, taskService, releaseExecutor)
+	serviceService.SetHealthCheckService(healthCheckService)
+	serviceService.SetSecretService(secretService)
 	dispatchWorker := tasksvc.NewWorker(taskService)
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()
@@ -72,7 +88,13 @@ func main() {
 		Interval: time.Minute,
 		Limit:    20,
 		Owner:    "aegisops-api",
-		Executor: tasksvc.NewDispatchExecutor(registryService, hostService, dockerService),
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{
+			Registry: registryService,
+			Host:     hostService,
+			Docker:   dockerService,
+			Service:  serviceService,
+			Nginx:    nginxService,
+		}),
 		OnError: func(err error) {
 			log.Warn("task dispatch worker failed", zap.Error(err))
 		},

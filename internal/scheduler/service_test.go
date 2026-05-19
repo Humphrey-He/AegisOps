@@ -201,7 +201,7 @@ func TestDispatchDueRegistryJobCanBeConsumedByLocalWorker(t *testing.T) {
 	worker := tasksvc.NewWorker(taskService)
 	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
 		Owner:    "scheduler-registry-worker",
-		Executor: tasksvc.NewDispatchExecutor(registryService, nil, nil),
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{Registry: registryService}),
 	})
 	if err != nil {
 		t.Fatalf("worker RunOnce: %v", err)

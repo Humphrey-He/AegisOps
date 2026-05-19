@@ -67,7 +67,7 @@ func TestWorkerExecutesRegistryTestDispatch(t *testing.T) {
 	worker := tasksvc.NewWorker(taskService)
 	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
 		Owner:    "registry-test-worker",
-		Executor: tasksvc.NewDispatchExecutor(registryService, nil, nil),
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{Registry: registryService}),
 	})
 	if err != nil {
 		t.Fatalf("worker RunOnce: %v", err)
@@ -148,7 +148,7 @@ func TestWorkerRegistryTestDispatchFailureMarksOffline(t *testing.T) {
 	worker := tasksvc.NewWorker(taskService)
 	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
 		Owner:    "registry-test-worker",
-		Executor: tasksvc.NewDispatchExecutor(registryService, nil, nil),
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{Registry: registryService}),
 	})
 	if err != nil {
 		t.Fatalf("worker RunOnce: %v", err)

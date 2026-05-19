@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/notification"
+	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
 
@@ -79,6 +81,8 @@ func TestReleaseSuccessCreatesVersionInstanceAndTask(t *testing.T) {
 	if result.TaskID == "" || result.ReleaseID == "" {
 		t.Fatalf("unexpected release result: %+v", result)
 	}
+	assertQueuedRelease(t, database, tasks, result)
+	runServiceWorker(t, database, tasks, service)
 
 	var version model.ServiceVersion
 	if err := database.First(&version, "service_id = ?", definition.ID).Error; err != nil {
@@ -159,14 +163,18 @@ func TestReleaseDeployFailureMarksReleaseTaskAndInstanceFailed(t *testing.T) {
 		Version:    "2026.05.15",
 		OperatorID: "user-1",
 	})
-	if err == nil {
-		t.Fatal("expected deploy failure")
+	if err != nil {
+		t.Fatalf("enqueue release: %v", err)
 	}
-	if !strings.Contains(err.Error(), "docker daemon unavailable") {
-		t.Fatalf("release error = %q, want deploy error", err.Error())
+	if result.TaskID == "" || result.ReleaseID == "" {
+		t.Fatalf("unexpected release result: %+v", result)
 	}
-	if result != nil {
-		t.Fatalf("release result = %+v, want nil on failure", result)
+	processed, err := runServiceWorkerAllowError(t, database, tasks, service)
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
 	}
 
 	var release model.ServiceReleaseRecord
@@ -243,14 +251,18 @@ func TestReleaseHealthCheckFailureMarksLatestInstanceFailed(t *testing.T) {
 		Version:    "2.0.0",
 		OperatorID: "user-1",
 	})
-	if err == nil {
-		t.Fatal("expected release to fail on health check")
+	if err != nil {
+		t.Fatalf("enqueue release: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unexpected http status 503") {
-		t.Fatalf("release error = %q, want health check failure", err.Error())
+	if result.TaskID == "" || result.ReleaseID == "" {
+		t.Fatalf("unexpected release result: %+v", result)
 	}
-	if result != nil {
-		t.Fatalf("release result = %+v, want nil on failure", result)
+	processed, err := runServiceWorkerAllowError(t, database, tasks, service)
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
 	}
 
 	var release model.ServiceReleaseRecord
@@ -323,6 +335,39 @@ func TestReleaseRejectsWhenAnotherReleaseIsRunning(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatalf("release result = %+v, want nil", result)
+	}
+}
+
+func TestReleaseRejectsWhenDispatchIsPending(t *testing.T) {
+	database := openServiceTestDB(t)
+	tasks := tasksvc.NewService(database)
+	service := NewService(database, tasks, NoopReleaseExecutor{})
+
+	definition := seedServiceDefinition(t, database, model.ServiceDefinition{
+		ID:         "svc-1",
+		Name:       "Demo API",
+		Code:       "demo-api",
+		Image:      "registry.local/demo-api",
+		DefaultTag: "1.0.0",
+		TargetID:   "docker-node-1",
+	})
+	if _, err := service.Release(context.Background(), definition.ID, ReleaseRequest{
+		ImageTag:   "1.0.1",
+		Version:    "2026.05.15",
+		OperatorID: "user-1",
+	}); err != nil {
+		t.Fatalf("enqueue first release: %v", err)
+	}
+	result, err := service.Release(context.Background(), definition.ID, ReleaseRequest{
+		ImageTag:   "1.0.2",
+		Version:    "2026.05.16",
+		OperatorID: "user-1",
+	})
+	if !errors.Is(err, ErrReleaseInProgress) {
+		t.Fatalf("second release error = %v, want %v", err, ErrReleaseInProgress)
+	}
+	if result != nil {
+		t.Fatalf("second release result = %+v, want nil", result)
 	}
 }
 
@@ -430,6 +475,154 @@ func TestReleaseRejectsMissingDisabledOrBlankTargetEnvironment(t *testing.T) {
 	}
 }
 
+func TestReleasePassesPrivateRegistryAuthToDockerExecutor(t *testing.T) {
+	database := openServiceTestDB(t)
+	tasks := tasksvc.NewService(database)
+	secretService, err := secretsvc.NewService(database, "test-master-key")
+	if err != nil {
+		t.Fatalf("new secret service: %v", err)
+	}
+	secret, err := secretService.Create(context.Background(), secretsvc.CreateRequest{
+		Name:  "registry basic",
+		Type:  model.SecretTypeDockerToken,
+		Value: "robot:super-secret",
+	})
+	if err != nil {
+		t.Fatalf("create registry secret: %v", err)
+	}
+	registry := model.Registry{
+		ID:       "registry-1",
+		Name:     "Private Registry",
+		URL:      "registry.local",
+		AuthType: model.RegistryAuthTypeBasic,
+		SecretID: secret.ID,
+	}
+	if err := database.Create(&registry).Error; err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	executor := &capturingReleaseExecutor{}
+	service := NewService(database, tasks, executor)
+	service.SetSecretService(secretService)
+	definition := seedServiceDefinition(t, database, model.ServiceDefinition{
+		ID:         "svc-1",
+		Name:       "Demo API",
+		Code:       "demo-api",
+		RegistryID: registry.ID,
+		Image:      "registry.local/demo-api",
+		DefaultTag: "1.0.0",
+		TargetID:   "docker-node-1",
+	})
+	result, err := service.Release(context.Background(), definition.ID, ReleaseRequest{
+		ImageTag:   "1.0.1",
+		Version:    "2026.05.15",
+		OperatorID: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("enqueue release: %v", err)
+	}
+	if result.TaskID == "" {
+		t.Fatal("expected task id")
+	}
+	runServiceWorker(t, database, tasks, service)
+	if executor.deployReq.RegistryAuth == "" {
+		t.Fatal("registry auth was not passed to deploy request")
+	}
+	authBytes, err := base64.URLEncoding.DecodeString(executor.deployReq.RegistryAuth)
+	if err != nil {
+		t.Fatalf("decode registry auth: %v", err)
+	}
+	var auth map[string]string
+	if err := json.Unmarshal(authBytes, &auth); err != nil {
+		t.Fatalf("unmarshal registry auth: %v", err)
+	}
+	if auth["username"] != "robot" || auth["password"] != "super-secret" || auth["serveraddress"] != "registry.local" {
+		t.Fatalf("registry auth = %+v", auth)
+	}
+}
+
+func TestReleaseThenRollbackThroughWorker(t *testing.T) {
+	database := openServiceTestDB(t)
+	tasks := tasksvc.NewService(database)
+	service := NewService(database, tasks, NoopReleaseExecutor{})
+	definition := seedServiceDefinition(t, database, model.ServiceDefinition{
+		ID:             "svc-rollback",
+		Name:           "Rollback API",
+		Code:           "rollback-api",
+		Image:          "registry.local/rollback-api",
+		DefaultTag:     "1.0.0",
+		TargetID:       "docker-node-1",
+		Status:         model.ServiceStatusActive,
+		CurrentVersion: "1.0.0",
+	})
+	if err := database.Create(&model.ServiceVersion{
+		ID:        "ver-1",
+		ServiceID: definition.ID,
+		Version:   "1.0.0",
+		Image:     definition.Image,
+		ImageTag:  "1.0.0",
+	}).Error; err != nil {
+		t.Fatalf("seed previous version: %v", err)
+	}
+	if err := database.Create(&model.ServiceInstance{
+		ID:           "inst-1",
+		ServiceID:    definition.ID,
+		VersionID:    "ver-1",
+		Version:      "1.0.0",
+		Image:        definition.Image,
+		ImageTag:     "1.0.0",
+		DockerNodeID: "docker-node-1",
+		Name:         definition.Code,
+		Status:       model.ServiceInstanceStatusRunning,
+	}).Error; err != nil {
+		t.Fatalf("seed previous instance: %v", err)
+	}
+	releaseResult, err := service.Release(context.Background(), definition.ID, ReleaseRequest{
+		ImageTag:   "2.0.0",
+		Version:    "2.0.0",
+		OperatorID: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("enqueue release: %v", err)
+	}
+	runServiceWorker(t, database, tasks, service)
+	task, err := tasks.Get(context.Background(), releaseResult.TaskID)
+	if err != nil {
+		t.Fatalf("load release task: %v", err)
+	}
+	if task.Status != model.TaskStatusSuccess || len(task.Steps) != 5 {
+		t.Fatalf("release task = %+v", task)
+	}
+	var running model.ServiceInstance
+	if err := database.First(&running, "service_id = ? AND status = ?", definition.ID, model.ServiceInstanceStatusRunning).Error; err != nil {
+		t.Fatalf("load running instance: %v", err)
+	}
+	if running.Version != "2.0.0" || !strings.HasPrefix(running.ContainerID, "noop-") {
+		t.Fatalf("running instance after release = %+v", running)
+	}
+	rollbackResult, err := service.Rollback(context.Background(), definition.ID, RollbackRequest{
+		VersionID:   "ver-1",
+		OperatorID: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("enqueue rollback: %v", err)
+	}
+	runServiceWorker(t, database, tasks, service)
+	rollbackTask, err := tasks.Get(context.Background(), rollbackResult.TaskID)
+	if err != nil {
+		t.Fatalf("load rollback task: %v", err)
+	}
+	if rollbackTask.Status != model.TaskStatusSuccess {
+		t.Fatalf("rollback task status = %s, want %s", rollbackTask.Status, model.TaskStatusSuccess)
+	}
+	stored, err := service.Get(context.Background(), definition.ID)
+	if err != nil {
+		t.Fatalf("reload service: %v", err)
+	}
+	if stored.CurrentVersion != "1.0.0" {
+		t.Fatalf("current version after rollback = %q, want 1.0.0", stored.CurrentVersion)
+	}
+}
+
 func seedEnvironment(t *testing.T, database *gorm.DB, code string, status model.EnvironmentStatus) {
 	t.Helper()
 	if err := database.Create(&model.Environment{
@@ -463,6 +656,67 @@ func (s stubReleaseExecutor) Deploy(_ context.Context, req DeployRequest) (*Depl
 		ContainerID: "stub-container",
 		Image:       imageRef(req.Image, req.ImageTag),
 	}, nil
+}
+
+type capturingReleaseExecutor struct {
+	validateReq DeployRequest
+	deployReq   DeployRequest
+}
+
+func (c *capturingReleaseExecutor) Validate(_ context.Context, req DeployRequest) error {
+	c.validateReq = req
+	return nil
+}
+
+func (c *capturingReleaseExecutor) Deploy(_ context.Context, req DeployRequest) (*DeployResult, error) {
+	c.deployReq = req
+	return &DeployResult{
+		ContainerID: "captured-container",
+		Image:       imageRef(req.Image, req.ImageTag),
+	}, nil
+}
+
+func assertQueuedRelease(t *testing.T, database *gorm.DB, tasks *tasksvc.Service, result *ReleaseResult) {
+	t.Helper()
+	var release model.ServiceReleaseRecord
+	if err := database.First(&release, "id = ?", result.ReleaseID).Error; err != nil {
+		t.Fatalf("load queued release: %v", err)
+	}
+	if release.Status != model.TaskStatusPending {
+		t.Fatalf("queued release status = %s, want %s", release.Status, model.TaskStatusPending)
+	}
+	task, err := tasks.Get(context.Background(), result.TaskID)
+	if err != nil {
+		t.Fatalf("load queued task: %v", err)
+	}
+	if task.Status != model.TaskStatusPending {
+		t.Fatalf("queued task status = %s, want %s", task.Status, model.TaskStatusPending)
+	}
+	if len(task.Dispatches) != 1 || task.Dispatches[0].Status != model.TaskDispatchStatusPending {
+		t.Fatalf("queued dispatches = %+v, want one pending dispatch", task.Dispatches)
+	}
+}
+
+func runServiceWorker(t *testing.T, database *gorm.DB, tasks *tasksvc.Service, service *Service) {
+	t.Helper()
+	processed, err := runServiceWorkerAllowError(t, database, tasks, service)
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+}
+
+func runServiceWorkerAllowError(t *testing.T, _ *gorm.DB, tasks *tasksvc.Service, service *Service) (int, error) {
+	t.Helper()
+	worker := tasksvc.NewWorker(tasks)
+	return worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
+		Owner: "service-test-worker",
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{
+			Service: service,
+		}),
+	})
 }
 
 func seedServiceDefinition(t *testing.T, database *gorm.DB, definition model.ServiceDefinition) model.ServiceDefinition {

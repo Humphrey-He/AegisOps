@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	"github.com/Humphrey-He/AegisOps/internal/model"
+	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 )
 
@@ -30,6 +32,7 @@ type Service struct {
 	tasks     *tasksvc.Service
 	executor  ReleaseExecutor
 	health    *healthsvc.Service
+	secrets   *secretsvc.Service
 	releaseMu sync.Mutex
 }
 
@@ -49,6 +52,7 @@ type DeployRequest struct {
 	EnvsJSON      string
 	MountsJSON    string
 	ResourcesJSON string
+	RegistryAuth  string
 }
 
 type DeployResult struct {
@@ -76,6 +80,7 @@ func (e *DockerReleaseExecutor) Deploy(ctx context.Context, req DeployRequest) (
 		EnvsJSON:      req.EnvsJSON,
 		MountsJSON:    req.MountsJSON,
 		ResourcesJSON: req.ResourcesJSON,
+		RegistryAuth:  req.RegistryAuth,
 	})
 	if err != nil {
 		return nil, err
@@ -95,6 +100,7 @@ func (e *DockerReleaseExecutor) Validate(ctx context.Context, req DeployRequest)
 		EnvsJSON:      req.EnvsJSON,
 		MountsJSON:    req.MountsJSON,
 		ResourcesJSON: req.ResourcesJSON,
+		RegistryAuth:  req.RegistryAuth,
 	})
 }
 
@@ -174,6 +180,19 @@ type ReleaseResult struct {
 	ReleaseID string `json:"releaseId"`
 }
 
+type changePayload struct {
+	ServiceID       string `json:"serviceId"`
+	Action          string `json:"action"`
+	Image           string `json:"image"`
+	ImageTag        string `json:"imageTag"`
+	Version         string `json:"version"`
+	TargetID        string `json:"targetId"`
+	ImageDigest     string `json:"imageDigest"`
+	TargetVersionID string `json:"targetVersionId,omitempty"`
+	ReleaseID       string `json:"releaseId,omitempty"`
+	OperatorID       string `json:"operatorId,omitempty"`
+}
+
 func NewService(db *gorm.DB, tasks *tasksvc.Service, executor ReleaseExecutor) *Service {
 	if executor == nil {
 		executor = NoopReleaseExecutor{}
@@ -183,6 +202,10 @@ func NewService(db *gorm.DB, tasks *tasksvc.Service, executor ReleaseExecutor) *
 
 func (s *Service) SetHealthCheckService(health *healthsvc.Service) {
 	s.health = health
+}
+
+func (s *Service) SetSecretService(secrets *secretsvc.Service) {
+	s.secrets = secrets
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.ServiceDefinition, error) {
@@ -368,11 +391,11 @@ func (s *Service) Versions(ctx context.Context, serviceID string, limit, offset 
 }
 
 func (s *Service) Release(ctx context.Context, serviceID string, req ReleaseRequest) (*ReleaseResult, error) {
-	return s.startChange(ctx, serviceID, model.ServiceReleaseActionRelease, "", req.Version, req.ImageTag, req.ImageDigest, req.TargetID, req.OperatorID)
+	return s.enqueueChange(ctx, serviceID, model.ServiceReleaseActionRelease, "", req.Version, req.ImageTag, req.ImageDigest, req.TargetID, req.OperatorID)
 }
 
 func (s *Service) Upgrade(ctx context.Context, serviceID string, req ReleaseRequest) (*ReleaseResult, error) {
-	return s.startChange(ctx, serviceID, model.ServiceReleaseActionUpgrade, "", req.Version, req.ImageTag, req.ImageDigest, req.TargetID, req.OperatorID)
+	return s.enqueueChange(ctx, serviceID, model.ServiceReleaseActionUpgrade, "", req.Version, req.ImageTag, req.ImageDigest, req.TargetID, req.OperatorID)
 }
 
 func (s *Service) Rollback(ctx context.Context, serviceID string, req RollbackRequest) (*ReleaseResult, error) {
@@ -380,10 +403,10 @@ func (s *Service) Rollback(ctx context.Context, serviceID string, req RollbackRe
 	if err != nil {
 		return nil, err
 	}
-	return s.startChange(ctx, serviceID, model.ServiceReleaseActionRollback, target.ID, target.Version, target.ImageTag, target.ImageDigest, "", req.OperatorID)
+	return s.enqueueChange(ctx, serviceID, model.ServiceReleaseActionRollback, target.ID, target.Version, target.ImageTag, target.ImageDigest, "", req.OperatorID)
 }
 
-func (s *Service) startChange(ctx context.Context, serviceID string, action model.ServiceReleaseAction, targetVersionID, version, imageTag, imageDigest, targetID, operatorID string) (*ReleaseResult, error) {
+func (s *Service) enqueueChange(ctx context.Context, serviceID string, action model.ServiceReleaseAction, targetVersionID, version, imageTag, imageDigest, targetID, operatorID string) (*ReleaseResult, error) {
 	s.releaseMu.Lock()
 	defer s.releaseMu.Unlock()
 
@@ -409,32 +432,135 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 	if err := s.ensureTargetEnvironment(ctx, service, targetID); err != nil {
 		return nil, err
 	}
-	payloadBytes, _ := json.Marshal(map[string]string{
-		"serviceId":   service.ID,
-		"action":      string(action),
-		"image":       service.Image,
-		"imageTag":    imageTag,
-		"version":     version,
-		"targetId":    targetID,
-		"imageDigest": imageDigest,
+	releaseID := uuid.NewString()
+	payloadBytes, _ := json.Marshal(changePayload{
+		ServiceID:       service.ID,
+		Action:          string(action),
+		Image:           service.Image,
+		ImageTag:        imageTag,
+		Version:         version,
+		TargetID:        targetID,
+		ImageDigest:     imageDigest,
+		TargetVersionID: targetVersionID,
+		ReleaseID:       releaseID,
+		OperatorID:      operatorID,
 	})
-	task, err := s.tasks.CreateRunning(ctx, tasksvc.CreateRequest{
+	task := model.Task{
+		ID:         uuid.NewString(),
 		Type:       "service." + strings.ToLower(string(action)),
 		Title:      fmt.Sprintf("%s service %s:%s", strings.ToLower(string(action)), service.Code, version),
+		Status:     model.TaskStatusPending,
 		TargetType: "service",
 		TargetID:   service.ID,
 		Payload:    string(payloadBytes),
 		CreatedBy:  operatorID,
-		Steps: []tasksvc.CreateStepRequest{
-			{Name: "validate release request", SortOrder: 1},
-			{Name: "resolve image version", SortOrder: 2},
-			{Name: "prepare docker execution", SortOrder: 3},
-			{Name: "record service state", SortOrder: 4},
-			{Name: "run post-release health check", SortOrder: 5},
-		},
+	}
+	stepReqs := []tasksvc.CreateStepRequest{
+		{Name: "validate release request", SortOrder: 1},
+		{Name: "resolve image version", SortOrder: 2},
+		{Name: "prepare docker execution", SortOrder: 3},
+		{Name: "record service state", SortOrder: 4},
+		{Name: "run post-release health check", SortOrder: 5},
+	}
+	release := model.ServiceReleaseRecord{
+		ID:            releaseID,
+		ServiceID:     service.ID,
+		TaskID:        task.ID,
+		Environment:   service.Environment,
+		Action:        action,
+		FromVersion:   service.CurrentVersion,
+		TargetVersion: version,
+		Status:        model.TaskStatusPending,
+		Message:       "release queued",
+		CreatedBy:     operatorID,
+	}
+	dispatch := model.TaskDispatch{
+		ID:             uuid.NewString(),
+		TaskID:         task.ID,
+		Source:         model.TaskDispatchSourceManual,
+		Status:         model.TaskDispatchStatusPending,
+		TimeoutSeconds: 1800,
+		ConcurrencyKey: serviceReleaseConcurrencyKey(service.ID),
+		QueuedAt:       time.Now().UTC(),
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureNoRunningReleaseTx(tx, service.ID); err != nil {
+			return err
+		}
+		if err := ensureNoRunningDispatchTx(tx, dispatch.ConcurrencyKey); err != nil {
+			return err
+		}
+		if err := tx.Create(&task).Error; err != nil {
+			return err
+		}
+		for _, stepReq := range stepReqs {
+			step := model.TaskStep{
+				ID:        uuid.NewString(),
+				TaskID:    task.ID,
+				Name:      stepReq.Name,
+				Status:    model.TaskStatusPending,
+				SortOrder: stepReq.SortOrder,
+			}
+			if err := tx.Create(&step).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(&release).Error; err != nil {
+			return err
+		}
+		return tx.Create(&dispatch).Error
 	})
 	if err != nil {
 		return nil, err
+	}
+	return &ReleaseResult{TaskID: task.ID, ReleaseID: release.ID}, nil
+}
+
+func (s *Service) ExecuteServiceChange(ctx context.Context, task model.Task, _ model.TaskDispatch) (string, error) {
+	var payload changePayload
+	if err := json.Unmarshal([]byte(task.Payload), &payload); err != nil {
+		return "", fmt.Errorf("parse service release payload: %w", err)
+	}
+	if payload.ServiceID == "" {
+		payload.ServiceID = task.TargetID
+	}
+	action := model.ServiceReleaseAction(strings.ToUpper(strings.TrimSpace(payload.Action)))
+	if action == "" {
+		action = model.ServiceReleaseActionRelease
+	}
+	releaseID := payload.ReleaseID
+	if releaseID == "" {
+		var release model.ServiceReleaseRecord
+		if err := s.db.WithContext(ctx).First(&release, "task_id = ?", task.ID).Error; err != nil {
+			return "", err
+		}
+		releaseID = release.ID
+	}
+	if err := s.executeChange(ctx, task.ID, releaseID, payload.ServiceID, action, payload.TargetVersionID, payload.Version, payload.ImageTag, payload.ImageDigest, payload.TargetID, payload.OperatorID); err != nil {
+		return "", err
+	}
+	return "service release completed", nil
+}
+
+func (s *Service) executeChange(ctx context.Context, taskID, releaseID, serviceID string, action model.ServiceReleaseAction, targetVersionID, version, imageTag, imageDigest, targetID, operatorID string) error {
+	service, err := s.Get(ctx, serviceID)
+	if err != nil {
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
+		return err
+	}
+	if imageTag == "" {
+		imageTag = service.DefaultTag
+	}
+	if version == "" {
+		version = imageTag
+	}
+	if targetID == "" {
+		targetID = service.TargetID
+	}
+	var task model.Task
+	if err := s.db.WithContext(ctx).Preload("Steps").First(&task, "id = ?", taskID).Error; err != nil {
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
+		return err
 	}
 	stepsByName := map[string]string{}
 	for _, step := range task.Steps {
@@ -457,24 +583,18 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 		}
 		return nil
 	}
-
-	release := model.ServiceReleaseRecord{
-		ID:            uuid.NewString(),
-		ServiceID:     service.ID,
-		TaskID:        task.ID,
-		Environment:   service.Environment,
-		Action:        action,
-		FromVersion:   service.CurrentVersion,
-		TargetVersion: version,
-		Status:        model.TaskStatusRunning,
-		Message:       "release running",
-		CreatedBy:     operatorID,
-	}
-	if err := s.db.WithContext(ctx).Create(&release).Error; err != nil {
-		return nil, err
+	if err := s.db.WithContext(ctx).Model(&model.ServiceReleaseRecord{}).Where("id = ?", releaseID).Updates(map[string]interface{}{
+		"status":  model.TaskStatusRunning,
+		"message": "release running",
+	}).Error; err != nil {
+		return err
 	}
 	var versionRecord model.ServiceVersion
 	if err := runStep("validate release request", func() error {
+		registryAuth, err := s.registryAuthForService(ctx, service, task.ID, operatorID)
+		if err != nil {
+			return err
+		}
 		return s.executor.Validate(ctx, DeployRequest{
 			NodeID:        targetID,
 			ServiceID:     service.ID,
@@ -486,11 +606,11 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 			EnvsJSON:      service.Envs,
 			MountsJSON:    service.Mounts,
 			ResourcesJSON: service.ResourceLimits,
+			RegistryAuth:  registryAuth,
 		})
 	}); err != nil {
-		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
-		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
-		return nil, err
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
+		return err
 	}
 	if err := runStep("resolve image version", func() error {
 		versionRecord = model.ServiceVersion{
@@ -505,14 +625,16 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 		}
 		return nil
 	}); err != nil {
-		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
-		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
-		return nil, err
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
+		return err
 	}
 	var deployResult *DeployResult
 	if err := runStep("prepare docker execution", func() error {
-		var err error
-		deployResult, err = s.executor.Deploy(ctx, DeployRequest{
+		registryAuth, err := s.registryAuthForService(ctx, service, task.ID, operatorID)
+		if err != nil {
+			return err
+		}
+		result, err := s.executor.Deploy(ctx, DeployRequest{
 			NodeID:        targetID,
 			ServiceID:     service.ID,
 			ServiceCode:   service.Code,
@@ -523,13 +645,14 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 			EnvsJSON:      service.Envs,
 			MountsJSON:    service.Mounts,
 			ResourcesJSON: service.ResourceLimits,
+			RegistryAuth:  registryAuth,
 		})
+		deployResult = result
 		return err
 	}); err != nil {
-		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
-		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
 		_ = s.recordFailedInstance(ctx, service, targetVersionID, version, imageTag, targetID, err.Error())
-		return nil, err
+		return err
 	}
 	err = runStep("record service state", func() error {
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -564,16 +687,13 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 			if err := tx.Create(&instance).Error; err != nil {
 				return err
 			}
-			if err := tx.Model(&model.ServiceReleaseRecord{}).Where("id = ?", release.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&model.ServiceReleaseRecord{}).Where("id = ?", releaseID).Updates(map[string]interface{}{
 				"target_version_id": versionRecord.ID,
 				"status":            model.TaskStatusSuccess,
 				"message":           "service container deployed and state recorded",
 			}).Error; err != nil {
 				return err
 			}
-			release.TargetVersionID = versionRecord.ID
-			release.Status = model.TaskStatusSuccess
-			release.Message = "service container deployed and state recorded"
 			return tx.Model(&model.ServiceDefinition{}).Where("id = ?", service.ID).Updates(map[string]interface{}{
 				"status":          model.ServiceStatusActive,
 				"current_version": version,
@@ -582,33 +702,35 @@ func (s *Service) startChange(ctx context.Context, serviceID string, action mode
 		})
 	})
 	if err != nil {
-		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
-		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
-		return nil, err
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
+		return err
 	}
 	if err := runStep("run post-release health check", func() error {
 		if s.health == nil {
 			_, _ = s.tasks.AddLog(ctx, task.ID, stepsByName["run post-release health check"], model.TaskLogLevelInfo, "health check service is not configured; skipped")
 			return nil
 		}
+		release := model.ServiceReleaseRecord{ID: releaseID, ServiceID: service.ID, TaskID: task.ID, Environment: service.Environment, Action: action, TargetVersionID: versionRecord.ID, TargetVersion: version}
 		check, err := s.health.RunServiceCheck(ctx, *service, release, task.ID)
 		if check != nil {
 			_, _ = s.tasks.AddLog(ctx, task.ID, stepsByName["run post-release health check"], model.TaskLogLevelInfo, check.Output)
 		}
 		return err
 	}); err != nil {
-		_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusFailed, "", err.Error())
-		_ = s.updateReleaseFailure(ctx, release.ID, err.Error())
+		_ = s.updateReleaseFailure(ctx, releaseID, err.Error())
 		_ = s.markLatestInstanceFailed(ctx, service.ID, err.Error())
-		return nil, err
+		return err
 	}
-	_ = s.tasks.Finish(ctx, task.ID, model.TaskStatusSuccess, release.Message, "")
-	return &ReleaseResult{TaskID: task.ID, ReleaseID: release.ID}, nil
+	return nil
 }
 
 func (s *Service) ensureNoRunningRelease(ctx context.Context, serviceID string) error {
+	return ensureNoRunningReleaseTx(s.db.WithContext(ctx), serviceID)
+}
+
+func ensureNoRunningReleaseTx(tx *gorm.DB, serviceID string) error {
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&model.ServiceReleaseRecord{}).
+	if err := tx.Model(&model.ServiceReleaseRecord{}).
 		Where("service_id = ? AND status IN ?", serviceID, []model.TaskStatus{model.TaskStatusPending, model.TaskStatusRunning}).
 		Count(&count).Error; err != nil {
 		return err
@@ -617,6 +739,79 @@ func (s *Service) ensureNoRunningRelease(ctx context.Context, serviceID string) 
 		return ErrReleaseInProgress
 	}
 	return nil
+}
+
+func ensureNoRunningDispatchTx(tx *gorm.DB, concurrencyKey string) error {
+	concurrencyKey = strings.TrimSpace(concurrencyKey)
+	if concurrencyKey == "" {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&model.TaskDispatch{}).
+		Where("concurrency_key = ? AND status IN ?", concurrencyKey, []model.TaskDispatchStatus{
+			model.TaskDispatchStatusPending,
+			model.TaskDispatchStatusDispatched,
+			model.TaskDispatchStatusRunning,
+		}).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrReleaseInProgress
+	}
+	return nil
+}
+
+func serviceReleaseConcurrencyKey(serviceID string) string {
+	return "service:" + strings.TrimSpace(serviceID) + ":release"
+}
+
+func (s *Service) registryAuthForService(ctx context.Context, service *model.ServiceDefinition, taskID, operatorID string) (string, error) {
+	if service == nil || strings.TrimSpace(service.RegistryID) == "" {
+		return "", nil
+	}
+	var registry model.Registry
+	if err := s.db.WithContext(ctx).First(&registry, "id = ?", service.RegistryID).Error; err != nil {
+		return "", err
+	}
+	if registry.AuthType == "" || registry.AuthType == model.RegistryAuthTypeNone {
+		return "", nil
+	}
+	if s.secrets == nil {
+		return "", fmt.Errorf("secret service is not configured for registry auth")
+	}
+	if strings.TrimSpace(registry.SecretID) == "" {
+		return "", fmt.Errorf("registry auth secret is required")
+	}
+	value, err := s.secrets.DecryptValueForUse(ctx, registry.SecretID, secretsvc.UseContext{
+		ResourceType: "service",
+		ResourceID:   service.ID,
+		Action:       "service.release.registry_auth",
+		OperatorID:   operatorID,
+		TaskID:       taskID,
+	})
+	if err != nil {
+		return "", err
+	}
+	auth := map[string]string{"serveraddress": registry.URL}
+	switch registry.AuthType {
+	case model.RegistryAuthTypeBasic:
+		username, password, ok := strings.Cut(value, ":")
+		if !ok || strings.TrimSpace(username) == "" {
+			return "", fmt.Errorf("registry basic secret must be username:password")
+		}
+		auth["username"] = username
+		auth["password"] = password
+	case model.RegistryAuthTypeToken:
+		auth["identitytoken"] = value
+	default:
+		return "", fmt.Errorf("unsupported registry auth type %s", registry.AuthType)
+	}
+	data, err := json.Marshal(auth)
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(data), nil
 }
 
 func (s *Service) updateReleaseFailure(ctx context.Context, releaseID, message string) error {

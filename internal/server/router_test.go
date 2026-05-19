@@ -14,9 +14,14 @@ import (
 
 	"github.com/Humphrey-He/AegisOps/internal/config"
 	"github.com/Humphrey-He/AegisOps/internal/db"
+	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
+	secretsvc "github.com/Humphrey-He/AegisOps/internal/secret"
+	servicesvc "github.com/Humphrey-He/AegisOps/internal/service"
+	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func TestSmokeHealthLoginAndMe(t *testing.T) {
@@ -338,6 +343,7 @@ func TestServiceReleaseSmoke(t *testing.T) {
 	if releasePayload.Data.TaskID == "" || releasePayload.Data.ReleaseID == "" {
 		t.Fatalf("unexpected release payload: %+v", releasePayload.Data)
 	}
+	runServiceDispatchWorker(t, cfg, database)
 
 	for _, target := range []string{
 		"/api/services/" + createPayload.Data.ID + "/instances",
@@ -1855,6 +1861,36 @@ func decodeID(t *testing.T, body []byte) string {
 		t.Fatalf("response did not include id; body=%s", string(body))
 	}
 	return payload.Data.ID
+}
+
+func runServiceDispatchWorker(t *testing.T, cfg *config.Config, dbConn *gorm.DB) {
+	t.Helper()
+	secretService, err := secretsvc.NewService(dbConn, cfg.Security.SecretKey)
+	if err != nil {
+		t.Fatalf("new secret service: %v", err)
+	}
+	taskService := tasksvc.NewService(dbConn)
+	dockerService := dockersvc.NewService(dbConn, secretService)
+	var releaseExecutor servicesvc.ReleaseExecutor = servicesvc.NewDockerReleaseExecutor(dockerService)
+	if cfg.App.Env == "test" {
+		releaseExecutor = servicesvc.NoopReleaseExecutor{}
+	}
+	serviceService := servicesvc.NewService(dbConn, taskService, releaseExecutor)
+	serviceService.SetSecretService(secretService)
+	worker := tasksvc.NewWorker(taskService)
+	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
+		Owner: "server-service-test-worker",
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{
+			Service: serviceService,
+			Docker:  dockerService,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("service dispatch worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("service dispatch worker processed = %d, want 1", processed)
+	}
 }
 
 func performRequest(handler http.Handler, method string, target string, body []byte, accessToken string) *httptest.ResponseRecorder {

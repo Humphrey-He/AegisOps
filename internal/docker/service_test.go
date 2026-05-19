@@ -67,7 +67,7 @@ func TestWorkerExecutesDockerNodeTestDispatch(t *testing.T) {
 	worker := tasksvc.NewWorker(tasks)
 	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{
 		Owner:    "docker-test-worker",
-		Executor: tasksvc.NewDispatchExecutor(nil, nil, service),
+		Executor: tasksvc.NewDispatchExecutor(tasksvc.DispatchExecutorOptions{Docker: service}),
 	})
 	if err != nil {
 		t.Fatalf("worker RunOnce: %v", err)

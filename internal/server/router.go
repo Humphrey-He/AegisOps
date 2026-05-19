@@ -112,6 +112,7 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	}
 	serviceService := servicesvc.NewService(database, taskService, releaseExecutor)
 	serviceService.SetHealthCheckService(healthCheckService)
+	serviceService.SetSecretService(secretService)
 
 	authHandler := handler.NewAuthHandler(authService, auditService)
 	userHandler := handler.NewUserHandler(database, authService, auditService)
