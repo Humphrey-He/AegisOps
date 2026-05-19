@@ -15,6 +15,7 @@ import (
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	schedulersvc "github.com/Humphrey-He/AegisOps/internal/scheduler"
 	"github.com/Humphrey-He/AegisOps/internal/server"
+	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 	"go.uber.org/zap"
 )
 
@@ -42,6 +43,8 @@ func main() {
 
 	router := server.NewRouter(cfg, database, log)
 	schedulerService := schedulersvc.NewService(database)
+	taskService := tasksvc.NewService(database)
+	dispatchWorker := tasksvc.NewWorker(taskService)
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()
 	go schedulerService.Run(schedulerCtx, schedulersvc.RunOptions{
@@ -52,6 +55,17 @@ func main() {
 		},
 		OnDispatch: func(dispatches []model.TaskDispatch) {
 			log.Info("scheduled jobs dispatched", zap.Int("count", len(dispatches)))
+		},
+	})
+	go dispatchWorker.Run(schedulerCtx, tasksvc.WorkerOptions{
+		Interval: time.Minute,
+		Limit:    20,
+		Owner:    "aegisops-api",
+		OnError: func(err error) {
+			log.Warn("task dispatch worker failed", zap.Error(err))
+		},
+		OnComplete: func(dispatch model.TaskDispatch) {
+			log.Info("task dispatch processed", zap.String("dispatchID", dispatch.ID), zap.String("status", string(dispatch.Status)))
 		},
 	})
 	httpServer := &http.Server{

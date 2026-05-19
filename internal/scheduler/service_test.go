@@ -95,6 +95,56 @@ func TestDispatchDueJobsCreatesTaskDispatch(t *testing.T) {
 	}
 }
 
+func TestDispatchDueJobsCanBeConsumedByLocalWorker(t *testing.T) {
+	t.Parallel()
+
+	service, cleanup := newTestService(t)
+	defer cleanup()
+	now := time.Date(2026, 5, 18, 10, 0, 30, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	job, err := service.Create(context.Background(), JobRequest{
+		Name:       "Noop Sweep",
+		Type:       "scheduled.noop",
+		CronExpr:   "*/5 * * * *",
+		TargetType: "system",
+		TargetID:   "scheduler",
+		OperatorID: "1",
+	})
+	if err != nil {
+		t.Fatalf("Create scheduled job: %v", err)
+	}
+	due := now.Add(-time.Minute)
+	if err := service.db.Model(&model.ScheduledJob{}).Where("id = ?", job.ID).Update("next_run_at", &due).Error; err != nil {
+		t.Fatalf("mark job due: %v", err)
+	}
+
+	dispatches, err := service.DispatchDueJobs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("DispatchDueJobs: %v", err)
+	}
+	if len(dispatches) != 1 {
+		t.Fatalf("dispatches len = %d, want 1", len(dispatches))
+	}
+
+	taskService := tasksvc.NewService(service.db)
+	worker := tasksvc.NewWorker(taskService)
+	processed, err := worker.RunOnce(context.Background(), tasksvc.WorkerOptions{Owner: "scheduler-test-worker"})
+	if err != nil {
+		t.Fatalf("worker RunOnce: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	loadedTask, err := taskService.Get(context.Background(), dispatches[0].TaskID)
+	if err != nil {
+		t.Fatalf("task get: %v", err)
+	}
+	if loadedTask.Status != model.TaskStatusSuccess || len(loadedTask.Dispatches) != 1 || loadedTask.Dispatches[0].Status != model.TaskDispatchStatusSuccess {
+		t.Fatalf("task after worker = %+v dispatches=%+v", loadedTask, loadedTask.Dispatches)
+	}
+}
+
 func TestDispatchDueJobsSkipsDisabledAndDuplicateConcurrency(t *testing.T) {
 	t.Parallel()
 
