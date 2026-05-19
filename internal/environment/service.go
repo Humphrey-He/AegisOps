@@ -38,6 +38,21 @@ func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
 
+func EnsureActive(ctx context.Context, db *gorm.DB, code string) (string, error) {
+	code = normalizeCode(code)
+	if code == "" {
+		return "", nil
+	}
+	var item model.Environment
+	if err := db.WithContext(ctx).First(&item, "code = ?", code).Error; err != nil {
+		return "", fmt.Errorf("environment %s not found", code)
+	}
+	if item.Status != model.EnvironmentStatusActive {
+		return "", fmt.Errorf("environment %s is not active", code)
+	}
+	return item.Code, nil
+}
+
 func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Environment, error) {
 	code := normalizeCode(req.Code)
 	if strings.TrimSpace(req.Name) == "" {

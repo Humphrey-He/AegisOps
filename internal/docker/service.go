@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
@@ -123,13 +124,17 @@ func (s *Service) CreateNode(ctx context.Context, req CreateNodeRequest) (*model
 	if req.AuthType == "" {
 		req.AuthType = model.DockerAuthTypeNone
 	}
+	environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+	if err != nil {
+		return nil, err
+	}
 	item := &model.DockerNode{
 		ID:          uuid.NewString(),
 		Name:        req.Name,
 		Endpoint:    req.Endpoint,
 		AuthType:    req.AuthType,
 		SecretID:    req.SecretID,
-		Environment: req.Environment,
+		Environment: environment,
 		Description: req.Description,
 		Status:      model.DockerNodeStatusUnknown,
 		CreatedBy:   req.OperatorID,
@@ -182,7 +187,13 @@ func (s *Service) UpdateNode(ctx context.Context, id string, req UpdateNodeReque
 		item.AuthType = req.AuthType
 	}
 	item.SecretID = req.SecretID
-	item.Environment = req.Environment
+	if strings.TrimSpace(req.Environment) != "" {
+		environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+		if err != nil {
+			return nil, err
+		}
+		item.Environment = environment
+	}
 	item.Description = req.Description
 	item.UpdatedBy = req.OperatorID
 	return item, s.db.WithContext(ctx).Save(item).Error

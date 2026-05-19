@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
@@ -97,13 +98,17 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Registr
 	if req.AuthType != model.RegistryAuthTypeNone && strings.TrimSpace(req.SecretID) == "" {
 		return nil, fmt.Errorf("secretId is required when authType is %s", req.AuthType)
 	}
+	environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+	if err != nil {
+		return nil, err
+	}
 	item := &model.Registry{
 		ID:          uuid.NewString(),
 		Name:        strings.TrimSpace(req.Name),
 		URL:         normalizedURL,
 		AuthType:    req.AuthType,
 		SecretID:    strings.TrimSpace(req.SecretID),
-		Environment: strings.TrimSpace(req.Environment),
+		Environment: environment,
 		Description: req.Description,
 		Status:      model.RegistryStatusUnknown,
 		CreatedBy:   req.OperatorID,
@@ -165,7 +170,13 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 		item.AuthType = req.AuthType
 	}
 	item.SecretID = strings.TrimSpace(req.SecretID)
-	item.Environment = strings.TrimSpace(req.Environment)
+	if strings.TrimSpace(req.Environment) != "" {
+		environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+		if err != nil {
+			return nil, err
+		}
+		item.Environment = environment
+	}
 	item.Description = req.Description
 	item.UpdatedBy = req.OperatorID
 	if item.AuthType != model.RegistryAuthTypeNone && item.SecretID == "" {

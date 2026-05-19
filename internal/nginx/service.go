@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	alertsvc "github.com/Humphrey-He/AegisOps/internal/alert"
+	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
@@ -88,11 +89,15 @@ func (s *Service) CreateNode(ctx context.Context, req CreateNodeRequest) (*model
 	if err := s.ensureHost(ctx, req.HostID); err != nil {
 		return nil, err
 	}
+	environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+	if err != nil {
+		return nil, err
+	}
 	item := &model.NginxNode{
 		ID:            uuid.NewString(),
 		Name:          strings.TrimSpace(req.Name),
 		HostID:        req.HostID,
-		Environment:   strings.TrimSpace(req.Environment),
+		Environment:   environment,
 		ConfigPath:    defaultString(req.ConfigPath, defaultConfigPath),
 		TestCommand:   defaultString(req.TestCommand, defaultTestCommand),
 		ReloadCommand: defaultString(req.ReloadCommand, defaultReloadCommand),
@@ -150,7 +155,13 @@ func (s *Service) UpdateNode(ctx context.Context, id string, req UpdateNodeReque
 	if req.Name != "" {
 		item.Name = strings.TrimSpace(req.Name)
 	}
-	item.Environment = strings.TrimSpace(req.Environment)
+	if strings.TrimSpace(req.Environment) != "" {
+		environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+		if err != nil {
+			return nil, err
+		}
+		item.Environment = environment
+	}
 	if req.ConfigPath != "" {
 		item.ConfigPath = req.ConfigPath
 	}

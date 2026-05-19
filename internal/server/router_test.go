@@ -203,6 +203,18 @@ func TestEnvironmentRoutesFilterResourcesAndProtectDelete(t *testing.T) {
 	if envPayload.Data.Code != "prod" {
 		t.Fatalf("environment code = %q, want prod", envPayload.Data.Code)
 	}
+	missingEnvDocker := performRequest(router, http.MethodPost, "/api/docker/nodes", []byte(`{"name":"missing-env-docker","endpoint":"mock://missing","authType":"NONE","environment":"missing"}`), token)
+	if missingEnvDocker.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/docker/nodes missing environment status = %d, want %d; body=%s", missingEnvDocker.Code, http.StatusBadRequest, missingEnvDocker.Body.String())
+	}
+	disabledEnv := performRequest(router, http.MethodPost, "/api/environments", []byte(`{"name":"Disabled","code":"disabled","status":"DISABLED"}`), token)
+	if disabledEnv.Code != http.StatusCreated {
+		t.Fatalf("POST disabled environment status = %d, want %d; body=%s", disabledEnv.Code, http.StatusCreated, disabledEnv.Body.String())
+	}
+	disabledEnvDocker := performRequest(router, http.MethodPost, "/api/docker/nodes", []byte(`{"name":"disabled-env-docker","endpoint":"mock://disabled","authType":"NONE","environment":"disabled"}`), token)
+	if disabledEnvDocker.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/docker/nodes disabled environment status = %d, want %d; body=%s", disabledEnvDocker.Code, http.StatusBadRequest, disabledEnvDocker.Body.String())
+	}
 
 	prodDocker := performRequest(router, http.MethodPost, "/api/docker/nodes", []byte(`{"name":"prod-docker","endpoint":"mock://prod-docker","authType":"NONE","environment":"prod"}`), token)
 	if prodDocker.Code != http.StatusCreated {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 
+	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
@@ -66,6 +68,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Host, e
 	if req.SSHPort == 0 {
 		req.SSHPort = 22
 	}
+	environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+	if err != nil {
+		return nil, err
+	}
 	item := &model.Host{
 		ID:          uuid.NewString(),
 		Name:        req.Name,
@@ -73,7 +79,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Host, e
 		SSHPort:     req.SSHPort,
 		SSHUser:     req.SSHUser,
 		SSHSecretID: req.SSHSecretID,
-		Environment: req.Environment,
+		Environment: environment,
 		Group:       req.Group,
 		Tags:        req.Tags,
 		Status:      model.HostStatusUnknown,
@@ -132,7 +138,13 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 	if req.SSHSecretID != "" {
 		item.SSHSecretID = req.SSHSecretID
 	}
-	item.Environment = req.Environment
+	if strings.TrimSpace(req.Environment) != "" {
+		environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+		if err != nil {
+			return nil, err
+		}
+		item.Environment = environment
+	}
 	item.Group = req.Group
 	item.Tags = req.Tags
 	item.UpdatedBy = req.OperatorID

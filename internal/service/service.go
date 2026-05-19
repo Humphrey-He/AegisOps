@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	dockersvc "github.com/Humphrey-He/AegisOps/internal/docker"
+	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
@@ -191,11 +192,15 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Service
 	if req.TargetType == "" {
 		req.TargetType = "DOCKER_NODE"
 	}
+	environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+	if err != nil {
+		return nil, err
+	}
 	item := &model.ServiceDefinition{
 		ID:             uuid.NewString(),
 		Name:           strings.TrimSpace(req.Name),
 		Code:           strings.TrimSpace(req.Code),
-		Environment:    strings.TrimSpace(req.Environment),
+		Environment:    environment,
 		Group:          req.Group,
 		Tags:           req.Tags,
 		Description:    req.Description,
@@ -212,7 +217,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*model.Service
 		CreatedBy:      req.OperatorID,
 		UpdatedBy:      req.OperatorID,
 	}
-	err := s.db.WithContext(ctx).Create(item).Error
+	err = s.db.WithContext(ctx).Create(item).Error
 	if isUniqueConstraint(err) {
 		return nil, ErrServiceCodeExists
 	}
@@ -259,7 +264,13 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*mo
 	if req.Name != "" {
 		item.Name = strings.TrimSpace(req.Name)
 	}
-	item.Environment = strings.TrimSpace(req.Environment)
+	if strings.TrimSpace(req.Environment) != "" {
+		environment, err := envsvc.EnsureActive(ctx, s.db, req.Environment)
+		if err != nil {
+			return nil, err
+		}
+		item.Environment = environment
+	}
 	if req.Group != "" {
 		item.Group = req.Group
 	}
@@ -616,7 +627,11 @@ func (s *Service) updateReleaseFailure(ctx context.Context, releaseID, message s
 }
 
 func (s *Service) ensureTargetEnvironment(ctx context.Context, service *model.ServiceDefinition, targetID string) error {
-	if strings.TrimSpace(service.Environment) == "" || strings.TrimSpace(targetID) == "" {
+	serviceEnvironment, err := envsvc.EnsureActive(ctx, s.db, service.Environment)
+	if err != nil {
+		return err
+	}
+	if serviceEnvironment == "" || strings.TrimSpace(targetID) == "" {
 		return nil
 	}
 	var node model.DockerNode
@@ -624,10 +639,14 @@ func (s *Service) ensureTargetEnvironment(ctx context.Context, service *model.Se
 		return err
 	}
 	if strings.TrimSpace(node.Environment) == "" {
-		return nil
+		return fmt.Errorf("target docker node environment is required when service environment is %s", serviceEnvironment)
 	}
-	if node.Environment != service.Environment {
-		return fmt.Errorf("target docker node environment %s does not match service environment %s", node.Environment, service.Environment)
+	nodeEnvironment, err := envsvc.EnsureActive(ctx, s.db, node.Environment)
+	if err != nil {
+		return err
+	}
+	if nodeEnvironment != serviceEnvironment {
+		return fmt.Errorf("target docker node environment %s does not match service environment %s", nodeEnvironment, serviceEnvironment)
 	}
 	return nil
 }

@@ -331,6 +331,8 @@ func TestReleaseRejectsDockerNodeEnvironmentMismatch(t *testing.T) {
 	tasks := tasksvc.NewService(database)
 	service := NewService(database, tasks, NoopReleaseExecutor{})
 
+	seedEnvironment(t, database, "prod", model.EnvironmentStatusActive)
+	seedEnvironment(t, database, "dev", model.EnvironmentStatusActive)
 	if err := database.Create(&model.DockerNode{
 		ID:          "docker-dev-1",
 		Name:        "dev docker",
@@ -363,6 +365,80 @@ func TestReleaseRejectsDockerNodeEnvironmentMismatch(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatalf("release result = %+v, want nil", result)
+	}
+}
+
+func TestReleaseRejectsMissingDisabledOrBlankTargetEnvironment(t *testing.T) {
+	tests := []struct {
+		name        string
+		serviceEnv  string
+		nodeEnv     string
+		seedService bool
+		seedNode    bool
+		want        string
+	}{
+		{name: "missing service environment", serviceEnv: "prod", nodeEnv: "dev", seedService: false, seedNode: true, want: "not found"},
+		{name: "disabled service environment", serviceEnv: "prod", nodeEnv: "dev", seedService: true, seedNode: true, want: "not active"},
+		{name: "blank target environment", serviceEnv: "prod", nodeEnv: "", seedService: true, seedNode: false, want: "target docker node environment is required"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database := openServiceTestDB(t)
+			tasks := tasksvc.NewService(database)
+			service := NewService(database, tasks, NoopReleaseExecutor{})
+			if tt.seedService {
+				status := model.EnvironmentStatusActive
+				if tt.name == "disabled service environment" {
+					status = model.EnvironmentStatusDisabled
+				}
+				seedEnvironment(t, database, tt.serviceEnv, status)
+			}
+			if tt.seedNode {
+				seedEnvironment(t, database, tt.nodeEnv, model.EnvironmentStatusActive)
+			}
+			if err := database.Create(&model.DockerNode{
+				ID:          "docker-1",
+				Name:        "docker",
+				Endpoint:    "mock://docker",
+				Environment: tt.nodeEnv,
+			}).Error; err != nil {
+				t.Fatalf("seed docker node: %v", err)
+			}
+			definition := seedServiceDefinition(t, database, model.ServiceDefinition{
+				ID:          "svc-1",
+				Name:        "Prod API",
+				Code:        "prod-api",
+				Environment: tt.serviceEnv,
+				Image:       "registry.local/prod-api",
+				DefaultTag:  "1.0.0",
+				TargetID:    "docker-1",
+			})
+
+			result, err := service.Release(context.Background(), definition.ID, ReleaseRequest{
+				ImageTag:   "1.0.1",
+				Version:    "2026.05.19",
+				OperatorID: "user-1",
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("release error = %v, want %q", err, tt.want)
+			}
+			if result != nil {
+				t.Fatalf("release result = %+v, want nil", result)
+			}
+		})
+	}
+}
+
+func seedEnvironment(t *testing.T, database *gorm.DB, code string, status model.EnvironmentStatus) {
+	t.Helper()
+	if err := database.Create(&model.Environment{
+		ID:     "env-" + code,
+		Name:   code,
+		Code:   code,
+		Status: status,
+	}).Error; err != nil {
+		t.Fatalf("seed environment %s: %v", code, err)
 	}
 }
 
