@@ -1,5 +1,40 @@
 # AegisOps 正式 Release 验收清单
 
+## 0.1 v1.6.0 发布验收记录（2026-10-24）
+
+### 发布信息
+
+- 版本号：v1.6.0
+- Tag：`v1.6.0`
+- 发布日期：2026-10-24
+- 发布人：Humphrey-He
+- 主题：安全加固 + 单二进制分发（在 v1.5.12 基线上）
+
+### 本次范围（每项独立提交，均带测试）
+
+| 项 | 内容 | 提交 |
+|---|---|---|
+| fix(task) | 任务派发抢占补 RowsAffected 校验，堵住多实例双执行（单机 writeMu 掩盖的竞态） | 18dcc73 |
+| test(secret) | secret 包补齐测试：加密往返 / Mask 边界 / 解密审计链 / 引用删除保护 / 轮换换密 | 90c4aff |
+| feat(auth) | 登录失败限流（用户名+IP，5 次/15 分钟）+ 首启强制改密（403 MUST_CHANGE_PASSWORD 门禁 + 前端改密页） | 11abfa0 |
+| feat(ssh) | SSH 主机公钥 TOFU 钉扎，替换 InsecureIgnoreHostKey（terminal 与 host 两处拨号点） | 2e6c456 |
+| feat(webui) | go:embed 内嵌前端，单二进制分发（33MB，含全量控制台 UI） | c7d8f6f |
+
+### 验收结果（2026-10-24 本地 · Windows / Go 1.25 / Node 22）
+
+- 后端测试：**通过**。`go build` ✅ `go vet` ✅ `go test ./...` **17 包全绿**（新增 auth、hostkey 两个测试包）
+- 前端构建：**通过**。`npm run build` 成功，dist 已随仓库提交（内嵌产物）
+- 单二进制冒烟：**通过**。`go build` 产出单 exe（33MB），SQLite 模式启动后：
+  `/` 直出内嵌 HTML、`/login` SPA 回退 200、哈希资产 200（9032B 实测）、`/api` 未知路径 JSON 404
+- 安全链路冒烟：**通过**。首启登录返回 `mustChangePassword:true` → 未改密访问 dashboard **403** → 改密 **200** → 访问 **200**；连续 6 次错误口令后第 7 次 **429 TOO_MANY_ATTEMPTS**
+- 已知边界（未变化）：AutoMigrate 无版本化、无 /metrics 自监控、通知为模板通道、生产化增强仍属二期
+
+### 定级
+
+**v1.6.0 = 稳定演示版（RC 级，较 v1.5.12 安全面显著收口）。** 正式 Release 定级条件不变：补真实资源冒烟与迁移版本化后再评。
+
+---
+
 ## 0. v1.5.12 发布验收记录（2026-10-24 复验补记）
 
 ### 发布信息
