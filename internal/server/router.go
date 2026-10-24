@@ -25,6 +25,7 @@ import (
 	servicesvc "github.com/Humphrey-He/AegisOps/internal/service"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
 	terminalsvc "github.com/Humphrey-He/AegisOps/internal/terminal"
+	"github.com/Humphrey-He/AegisOps/internal/webui"
 	"github.com/Humphrey-He/AegisOps/pkg/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -157,6 +158,9 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 	exportHandler.RegisterRoutes(protected, rbacService)
 	backupHandler.RegisterRoutes(protected, rbacService)
 	schedulerHandler.RegisterRoutes(protected, rbacService)
+
+	// 兜底路由：内嵌前端（SPA）+ /api 未知路径 JSON 404。
+	webui.Register(r)
 
 	return r
 }

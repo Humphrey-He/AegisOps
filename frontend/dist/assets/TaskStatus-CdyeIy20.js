@@ -1,0 +1,1 @@
+import{j as s}from"./vendor-react-BFr1YBw4.js";import{S as r}from"./StatusBadge-DNsHn0_E.js";import{S as e,Z as a}from"./vendor-antd-JqYQ9jx2.js";function n({task:t}){return s.jsxs(e,{direction:"vertical",size:4,style:{width:180},children:[s.jsx(r,{status:t.status}),s.jsx(a,{percent:t.progress,size:"small",showInfo:!1})]})}export{n as T};

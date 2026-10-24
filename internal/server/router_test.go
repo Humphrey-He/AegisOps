@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1811,6 +1812,61 @@ func testConfig(t *testing.T) *config.Config {
 			Password: "admin123456",
 			Email:    "admin@example.com",
 		},
+	}
+}
+
+func TestEmbeddedServesFrontend(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	database, err := db.Open(cfg.Database)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+	if err := db.AutoMigrate(database); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	router := NewRouter(cfg, database, zap.NewNop())
+
+	// 根路径直出内嵌的 index.html。
+	home := performRequest(router, http.MethodGet, "/", nil, "")
+	if home.Code != http.StatusOK || !strings.Contains(strings.ToLower(home.Body.String()), "<!doctype html") {
+		t.Fatalf("GET / status = %d; body head=%.80s", home.Code, home.Body.String())
+	}
+
+	// SPA 前端路由（如 /login）回退 index.html。
+	login := performRequest(router, http.MethodGet, "/login", nil, "")
+	if login.Code != http.StatusOK || !strings.Contains(strings.ToLower(login.Body.String()), "<!doctype html") {
+		t.Fatalf("GET /login status = %d; body head=%.80s", login.Code, login.Body.String())
+	}
+
+	// 静态资产可命中：从 index.html 抓一个 /assets/ 引用直接请求。
+	body := home.Body.String()
+	start := strings.Index(body, "/assets/")
+	if start < 0 {
+		t.Fatal("index.html references no /assets/ file")
+	}
+	end := strings.IndexAny(body[start:], "\"'")
+	if end < 0 {
+		t.Fatal("malformed asset reference in index.html")
+	}
+	assetPath := body[start : start+end]
+	asset := performRequest(router, http.MethodGet, assetPath, nil, "")
+	if asset.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want %d", assetPath, asset.Code, http.StatusOK)
+	}
+
+	// /api 未知路径仍返回 JSON 404，不被 SPA 兜底吞掉。
+	apiMiss := performRequest(router, http.MethodGet, "/api/no-such-route", nil, "")
+	if apiMiss.Code != http.StatusNotFound || !strings.Contains(apiMiss.Body.String(), "NOT_FOUND") {
+		t.Fatalf("GET /api/no-such-route status = %d; body=%s", apiMiss.Code, apiMiss.Body.String())
 	}
 }
 

@@ -1,0 +1,1 @@
+import{u as s}from"./vendor-utils-D9esv-Qo.js";function f(t){return t?s(t).format("YYYY-MM-DD HH:mm:ss"):"--"}function m(t){if(!t||t<=0)return"--";const n=["B","KB","MB","GB","TB"];let r=t,i=0;for(;r>=1024&&i<n.length-1;)r/=1024,i+=1;const e=r>=10||i===0?0:1;return`${r.toFixed(e)} ${n[i]}`}export{m as a,f};

@@ -1,0 +1,1 @@
+import{h as a,j as t}from"./vendor-react-BFr1YBw4.js";import{R as o,B as r}from"./vendor-antd-JqYQ9jx2.js";import"./vendor-utils-D9esv-Qo.js";function u(){const s=a();return t.jsx(o,{status:"404",title:"404",subTitle:"你访问的页面不存在，或当前账号无权访问该入口。",extra:t.jsx(r,{type:"primary",onClick:()=>s("/dashboard"),children:"回到控制台"})})}export{u as NotFoundPage};

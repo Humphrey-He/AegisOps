@@ -6,7 +6,8 @@ data/
 *.db-wal
 tmp/
 bin/
-dist/
+# 只忽略仓库根的 dist；frontend/dist 是 go:embed 的内嵌产物，需要随仓库提交
+/dist/
 node_modules/
 *.tsbuildinfo
 frontend/vite.config.js

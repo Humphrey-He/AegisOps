@@ -1,0 +1,1 @@
+import{h as s,j as t}from"./vendor-react-BFr1YBw4.js";import{R as a,B as e}from"./vendor-antd-JqYQ9jx2.js";import"./vendor-utils-D9esv-Qo.js";function u(){const r=s();return t.jsx(a,{status:"403",title:"403",subTitle:"你当前没有访问这个页面的权限。",extra:t.jsx(e,{type:"primary",onClick:()=>r("/dashboard"),children:"返回工作台"})})}export{u as ForbiddenPage};
