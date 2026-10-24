@@ -2,9 +2,27 @@
 
 [中文](./README.md) | [日本語](./README.ja-JP.md) | [English](./README.en.md)
 
+[![CI](https://github.com/Humphrey-He/AegisOps/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Humphrey-He/AegisOps/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 `AegisOps` 是一个面向轻量运维控制面、应用交付与稳定性治理的 DevOps 平台项目。
 
-当前仓库最新正式版本为 `v1.5.12`，已经不是“只有脚手架”的状态，而是具备可本地运行、可演示、可联调、可继续扩展的稳定版本基线。
+当前仓库最新版本为 `v1.5.12`（稳定演示版）：后端 `go test ./...` 全绿、前端 `npm run build` 通过、SQLite 模式可一键跑起，具备可本地运行、可演示、可联调、可继续扩展的稳定版本基线。
+
+## 快速启动（3 步）
+
+```powershell
+# ① 后端：SQLite 轻量模式，免安装数据库（默认 :8080）
+$env:GOCACHE="$PWD\.gocache"; $env:AEGISOPS_DATABASE_DRIVER="sqlite"; $env:AEGISOPS_DATABASE_DSN="data/aegisops.db"; go run ./cmd/aegisops
+
+# ② 前端：另开一个终端（:4173，/api 自动代理到 :8080）
+cd frontend; npm install; npm run dev
+
+# ③ 验证：curl 通了之后，浏览器打开 http://localhost:4173（默认账号 admin / admin123456）
+curl http://127.0.0.1:8080/healthz
+```
+
+> 需要 PostgreSQL 作为主数据库时：`docker compose -f deploy/postgres/docker-compose.yaml up -d`。
 
 ## 项目定位
 
@@ -16,25 +34,6 @@ AegisOps 更适合以下场景：
 - DevOps 控制面产品原型与二期演进基线
 
 它当前更偏向“单机可运行、链路可验证、领域建模完整”的轻量平台，而不是大规模多租户 SaaS。
-
-## 当前版本评价
-
-从当前实现看，这个项目的优点比较明确：
-
-- 领域边界清楚：围绕主机、Secret、Docker、Registry、服务发布、Nginx、任务、告警、通知、审计展开，主线完整
-- 后端完成度高：不仅有 CRUD，还有 RBAC、审计、发布链路、健康检查、告警联动、导出/备份、调度等平台能力
-- 前端不是纯展示壳：已经形成工作台式控制台，能承载真实业务对象和任务上下文
-- 文档资产完整：产品定位、一期开发经验、阶段审查、二期规划、Release 验收口径都比较齐
-- 本地可运行性好：默认 PostgreSQL 作为主阶段数据库，也保留 SQLite 作为本地演示与轻量开发选项
-
-当前仍然存在的边界也需要如实说明：
-
-- 默认部署形态仍以单机/本地环境为主，大规模生产治理能力还需要二期继续增强
-- 导出、备份等能力以后端 API 为主，前端统一操作入口仍有继续补齐空间
-- 权限细粒度、密钥生命周期、调度器高级能力、真实外部通知集成仍属于重点增强方向
-- 若用于更严肃的生产环境，仍应继续做真实主机、Docker、Nginx、通知通道的长期回归验证
-
-一句话评价：这是一个完成度较高、方向明确、很适合作为“后端主导的 DevOps 控制面项目”的 `v1.5.12` 稳定版本。
 
 ## v1.5.12 已提供的能力
 
@@ -102,6 +101,32 @@ AegisOps 更适合以下场景：
 
 - 当前前端控制台已经能直接对接真实后端运行
 - 导出、备份等能力目前以后端接口与数据能力为主，前端统一管理入口仍可继续增强
+
+## 架构总览
+
+```mermaid
+flowchart LR
+    subgraph FE["前端 frontend/ · React 18 + TypeScript + Ant Design 5 + Vite"]
+        UI["控制台：工作台 / 资产 / Docker / 服务发布 / 任务 / 告警 / 审计 / Web 终端（xterm）"]
+    end
+    UI -- "HTTP /api · JWT" --> MW
+    UI -- "WebSocket /terminal/sessions/:id/ws" --> TM
+    subgraph BE["后端 cmd/aegisops · Gin · :8080"]
+        MW["中间件链：Logger → Recovery → JWT 认证 → RBAC（RequirePermission）→ 审计"]
+        TM["terminal 会话服务（SSH）"]
+        MW --> HD["23 个 Handler · 约 145 条路由"]
+        HD --> MOD
+        subgraph MOD["领域模块 internal/"]
+            GOV["治理：auth · rbac · audit · secret（加密存储 + 脱敏返回）"]
+            RES["资源：host · docker · registry · nginx"]
+            DELI["交付：service 发布/升级/回滚 · healthcheck"]
+            RUN["运行：task executor+worker · scheduler · environment"]
+            STAB["稳定：alert · notification"]
+            EXP["支撑：exporter 导出/备份 · demo 数据"]
+        end
+    end
+    MOD -- "GORM" --> DB[("PostgreSQL（主）/ SQLite（轻量）")]
+```
 
 ## 目录结构
 
@@ -265,7 +290,7 @@ docker compose -f deploy/postgres/docker-compose.yaml up -d
 - [AegisOps产品未来演进方向分析](./docs/AegisOps产品未来演进方向分析.md)
 - [AegisOps一期MVP开发路线](./docs/AegisOps一期MVP开发路线.md)
 - [AegisOps一期开发手册（真实经验与排查方法）](./docs/AegisOps一期开发手册（真实经验与排查方法）.md)
-- [AegisOps阶段审查报告（一期完成度与二期建议）](./docs/AegisOps阶段审查报告（一期完成度与二期建议）.md)
+- [AegisOps阶段审查报告（一期完成度与二期建议）](./docs/archive/AegisOps阶段审查报告（一期完成度与二期建议）.md)（历史快照，v0.x 阶段）
 - [AegisOps UIUX视觉与易用性专业优化方案](./docs/AegisOps%20UIUX视觉与易用性专业优化方案.md)
 - [AegisOps二期前后端开发路线](./docs/AegisOps二期前后端开发路线.md)
 - [AegisOps二期专项规划：通知告警与健康检查闭环](./docs/AegisOps二期专项规划：通知告警与健康检查闭环.md)
