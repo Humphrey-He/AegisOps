@@ -7,22 +7,20 @@
 
 `AegisOps` 是一个面向轻量运维控制面、应用交付与稳定性治理的 DevOps 平台项目。
 
-当前仓库最新版本为 `v1.5.12`（稳定演示版）：后端 `go test ./...` 全绿、前端 `npm run build` 通过、SQLite 模式可一键跑起，具备可本地运行、可演示、可联调、可继续扩展的稳定版本基线。
+当前仓库最新版本为 `v1.6.0`：在 v1.5.12 基线上完成一轮安全加固（SSH 主机密钥钉扎、登录限流、首启强制改密、任务抢占并发修复、secret 包测试补齐）并支持**单二进制分发**（前端经 go:embed 内嵌）。`go test ./...` 17 包全绿，CI 全绿。
 
-## 快速启动（3 步）
+## 快速启动（单二进制，2 条命令）
 
 ```powershell
-# ① 后端：SQLite 轻量模式，免安装数据库（默认 :8080）
+# ① 克隆并启动（前端已内嵌进二进制，无需 Node）
+git clone https://github.com/Humphrey-He/AegisOps; cd AegisOps
 $env:GOCACHE="$PWD\.gocache"; $env:AEGISOPS_DATABASE_DRIVER="sqlite"; $env:AEGISOPS_DATABASE_DSN="data/aegisops.db"; go run ./cmd/aegisops
 
-# ② 前端：另开一个终端（:4173，/api 自动代理到 :8080）
-cd frontend; npm install; npm run dev
-
-# ③ 验证：curl 通了之后，浏览器打开 http://localhost:4173（默认账号 admin / admin123456）
-curl http://127.0.0.1:8080/healthz
+# ② 浏览器打开 http://localhost:8080
+#    初始账号 admin / admin123456，首次登录强制改密后才能使用
 ```
 
-> 需要 PostgreSQL 作为主数据库时：`docker compose -f deploy/postgres/docker-compose.yaml up -d`。
+> 需要 PostgreSQL 作为主数据库时：`docker compose -f deploy/postgres/docker-compose.yaml up -d`。前端二次开发走 Vite 开发模式，见下文「前端启动」；改完执行 `npm run build` 并提交 `frontend/dist`（内嵌产物随仓库走）。
 
 ## 项目定位
 
@@ -35,7 +33,7 @@ AegisOps 更适合以下场景：
 
 它当前更偏向“单机可运行、链路可验证、领域建模完整”的轻量平台，而不是大规模多租户 SaaS。
 
-## v1.5.12 已提供的能力
+## v1.6.0 已提供的能力
 
 ### 后端能力
 
@@ -45,10 +43,13 @@ AegisOps 更适合以下场景：
   - 用户/角色管理
   - RBAC 权限控制
   - 审计日志
+  - 登录失败限流（用户名 + IP，5 次失败锁 15 分钟，成功即清零）
+  - 首启强制改密（初始口令公开，未改密前业务接口一律 403）
 - 资产与凭证
   - 主机管理
   - SSH 连通性测试
   - Secret 加密存储与脱敏返回
+  - SSH 主机公钥 TOFU 钉扎（known_hosts 语义存于 Host 记录，密钥变化即拒绝）
 - 运维执行
   - 任务中心
   - 任务步骤与任务日志
@@ -68,9 +69,11 @@ AegisOps 更适合以下场景：
 - 平台支撑
   - 导出 API
   - 备份 API
-  - 调度任务 API
+  - 调度任务 API（含后台到期派发）
+  - 任务派发多实例抢占安全（条件更新 + RowsAffected 校验 + 租约）
   - Demo 数据注入
   - PostgreSQL 主阶段支持，SQLite 作为可选轻量模式
+  - **单二进制分发**：前端产物经 go:embed 内嵌，`go build` 产出即全量
 
 ### 前端已落地页面
 
@@ -302,9 +305,9 @@ docker compose -f deploy/postgres/docker-compose.yaml up -d
 
 当前仓库可以定义为：
 
-- 已完成 `v1.5.12` 正式版本基线
+- 已完成 `v1.6.0` 版本基线：v1.5.12 的稳定演示基线 + 一轮安全加固 + 单二进制分发
 - 已具备本地运行、功能演示、接口联调、继续二期开发的稳定基础
-- 后续重点会从 `v1.5.x` 稳定收口转向“生产化增强、外部集成增强、二期专项建设”
+- 后续重点会从 `v1.6.x` 收口转向"生产化增强、外部集成增强、二期专项建设"（迁移版本化、/metrics 自监控、真实通知通道等仍是已知边界，见 Release 验收清单）
 
 如果你把它当作个人项目来看，它已经足够像一个真实运维平台；
 如果你把它当作长期产品来看，二期的重点会更偏向“把已经搭起来的控制面，继续打磨成更稳、更细、更强的生产系统”。
