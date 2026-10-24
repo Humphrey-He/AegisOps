@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Humphrey-He/AegisOps/internal/hostkey"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
 	"github.com/google/uuid"
@@ -260,7 +261,7 @@ func (s *Service) dialHost(ctx context.Context, host *model.Host) (SSHClient, er
 	config := &ssh.ClientConfig{
 		User:            host.SSHUser,
 		Auth:            []ssh.AuthMethod{auth},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostkey.Callback(s.db, host),
 		Timeout:         s.timeout,
 	}
 	address := net.JoinHostPort(host.Address, fmt.Sprintf("%d", host.SSHPort))

@@ -14,6 +14,7 @@ import (
 
 	envsvc "github.com/Humphrey-He/AegisOps/internal/environment"
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
+	"github.com/Humphrey-He/AegisOps/internal/hostkey"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	"github.com/Humphrey-He/AegisOps/internal/secret"
 	tasksvc "github.com/Humphrey-He/AegisOps/internal/task"
@@ -175,7 +176,7 @@ func (s *Service) TestSSH(ctx context.Context, id string) error {
 	config := &ssh.ClientConfig{
 		User:            item.SSHUser,
 		Auth:            []ssh.AuthMethod{auth},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostkey.Callback(s.db, item),
 		Timeout:         s.timeout,
 	}
 	address := net.JoinHostPort(item.Address, fmt.Sprintf("%d", item.SSHPort))
