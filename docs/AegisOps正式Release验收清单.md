@@ -1,5 +1,43 @@
 # AegisOps 正式 Release 验收清单
 
+## 0. v1.5.12 发布验收记录（2026-10-24 复验补记）
+
+### 发布信息
+
+- 版本号：v1.5.12
+- Tag：`v1.5.12`（已存在）
+- 发布日期：2026-05-19
+- 发布人：Humphrey-He
+- 对应 commit：`ce0bcab`（chore(release): prepare v1.5.12）
+
+### 验收结果（2026-10-24 本地复验 · Windows / Go 1.25 / Node 22）
+
+- 后端测试：**通过**。`go build ./...` ✅ · `go vet ./...` ✅ · `go test ./...` 14 个含测试包全部通过、零失败
+- 前端构建：**通过**。`npm ci` + `npm run build`（tsc -b && vite build）成功，约 27s，产物正常生成
+- 核心功能冒烟：**通过（本地 SQLite 轻量模式）**。服务正常启动，`/healthz` 200、`/readyz` 200、`POST /api/auth/login` 200（返回 accessToken）、`GET /api/auth/me` 200、`GET /api/dashboard/summary`（携带 JWT，经 RBAC RequirePermission）200；结构化日志含 traceId
+- 权限冒烟：**部分通过**。无 Token 访问受保护接口正确返回 401（认证层有效）；RBAC 细粒度 403 场景（普通用户访问高风险接口）本轮未复验
+- 回滚方案：上一稳定 Tag 为 `v1.5.11`；数据库迁移可回退性本轮未验证
+
+### 定级
+
+按 §10 最低门槛逐条对照：测试全绿 ✅、前端构建全绿 ✅、版本号与 Tag 一致 ✅、README 能力与实现一致 ✅；但「主机 / Docker / Service / Nginx / 任务中心的真实资源冒烟」本轮未执行（仅覆盖登录与 Dashboard 链路）。
+
+**结论：v1.5.12 定级为「稳定演示版（RC 级）」。** 若后续完成真实资源冒烟并通过，可升级为正式 Release 定级。
+
+### 发布范围
+
+- 本次新增（v1.5.x 系列累计）：调度任务与 dispatch 执行（host SSH / Docker / Registry）、导出与备份 API 及前端入口、PostgreSQL 主阶段迁移、任务上下文工作台
+- 本次修复：导出备份对齐 PostgreSQL-first、资源作用域强制
+- 本次不包含：真实外部通知通道集成、多实例部署、真实主机/Docker/Nginx 的长期回归
+
+### 已知问题
+
+- 问题 1：`docs/` 下 2026-05-14 的两份过程文档（阶段审查报告、联调阻塞清单）已归档至 `docs/archive/`，其描述的缺口已在 v1.x 系列补齐
+- 问题 2：默认管理员口令、JWT Secret、Secret Key 仅用于本地演示，生产必须替换
+- 问题 3：CI（GitHub Actions：后端 build/vet/test + 前端 build）于 2026-10-24 加入，徽章见 README
+
+---
+
 ## 1. 文档目的
 
 本文档用于作为 AegisOps 每次“正式发布版本”前的统一验收口径。
