@@ -108,6 +108,7 @@ type BackendUser = {
   email?: string;
   status: "active" | "disabled" | "ACTIVE" | "DISABLED";
   isAdmin?: boolean;
+  mustChangePassword?: boolean;
   roles?: BackendRole[];
   createdAt: string;
   lastLoginAt?: string;
@@ -662,6 +663,7 @@ function mapBackendUser(user: BackendUser): User {
     roleIds: (user.roles ?? []).map((role) => String(role.id)),
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
+    mustChangePassword: user.mustChangePassword ?? false,
   };
 }
 
@@ -1441,6 +1443,9 @@ export const authApi = {
     }
     await http.post<void>("/auth/logout");
     return { ok: true };
+  },
+  changePassword: async (payload: { oldPassword: string; newPassword: string }): Promise<{ changed: boolean }> => {
+    return http.post<{ changed: boolean }>("/auth/change-password", payload);
   },
 };
 

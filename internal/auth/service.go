@@ -94,6 +94,8 @@ func (s *Service) InitAdmin(ctx context.Context) (*model.User, error) {
 		Email:        s.config.InitialAdminEmail,
 		Status:       model.UserStatusActive,
 		IsAdmin:      true,
+		// 初始口令来自配置/文档，属于公开信息：首次登录后强制改密。
+		MustChangePassword: true,
 	}
 
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -316,6 +318,31 @@ func (s *Service) HashPassword(password string) (string, error) {
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(hash), err
+}
+
+// ChangePassword 校验旧口令、落新口令并清除强制改密标记。
+// 新口令策略复用 HashPassword（当前最少 8 位）。
+func (s *Service) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword string) error {
+	var user model.User
+	if err := s.db.WithContext(ctx).First(&user, userID).Error; err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
+		return appErrors.ErrInvalidCredentials
+	}
+	if oldPassword == newPassword {
+		return appErrors.ErrInvalidInput
+	}
+	hash, err := s.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&model.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]any{
+			"password_hash":         hash,
+			"must_change_password": false,
+		}).Error
 }
 
 func (s *Service) issueTokenPair(user model.User) (*TokenPair, error) {

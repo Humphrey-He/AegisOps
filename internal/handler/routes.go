@@ -22,6 +22,7 @@ func RegisterAuthRoutes(group *gin.RouterGroup, authHandler *AuthHandler, authMi
 	protected := group.Group("", authMiddleware)
 	protected.POST("/auth/logout", authHandler.Logout)
 	protected.GET("/auth/me", authHandler.Me)
+	protected.POST("/auth/change-password", authHandler.ChangePassword)
 }
 
 func RegisterUserRoleAuditRoutes(group *gin.RouterGroup, authMiddleware gin.HandlerFunc, rbacService *rbac.Service, userHandler *UserHandler, roleHandler *RoleHandler, auditHandler *AuditHandler) {

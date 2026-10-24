@@ -137,7 +137,8 @@ func NewRouter(cfg *config.Config, database *gorm.DB, log *zap.Logger) http.Hand
 
 	handler.RegisterAuthRoutes(api, authHandler, authMiddleware)
 	handler.RegisterUserRoleAuditRoutes(api, authMiddleware, rbacService, userHandler, roleHandler, auditHandler)
-	protected := api.Group("", authMiddleware)
+	// 业务接口统一过「强制改密」检查；豁免路由见 auth.passwordChangeAllowlist。
+	protected := api.Group("", authMiddleware, auth.RequirePasswordChangeCleared())
 	protected.GET("/dashboard/summary", rbac.RequirePermission(rbacService, "dashboard.view"), dashboardHandler.Summary)
 	protected.GET("/resources/context", rbac.RequirePermission(rbacService, "dashboard.view"), dashboardHandler.ResourceContext)
 	protected.GET("/resources/search", rbac.RequirePermission(rbacService, "dashboard.view"), dashboardHandler.ResourceSearch)

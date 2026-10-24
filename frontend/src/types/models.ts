@@ -73,6 +73,7 @@ export type User = {
   roleIds: string[];
   createdAt: string;
   lastLoginAt?: string;
+  mustChangePassword?: boolean;
 };
 
 export type Secret = {

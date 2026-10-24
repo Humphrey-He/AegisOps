@@ -17,8 +17,10 @@ type User struct {
 	Email        string     `json:"email" gorm:"size:255;index"`
 	Status       UserStatus `json:"status" gorm:"size:32;not null;default:active"`
 	IsAdmin      bool       `json:"isAdmin" gorm:"not null;default:false"`
-	LastLoginAt  *time.Time `json:"lastLoginAt"`
-	Roles        []Role     `json:"roles,omitempty" gorm:"many2many:user_roles;"`
+	// MustChangePassword 首次以初始口令登录后必须先改密才能使用平台。
+	MustChangePassword bool       `json:"mustChangePassword" gorm:"not null;default:false"`
+	LastLoginAt        *time.Time `json:"lastLoginAt"`
+	Roles              []Role     `json:"roles,omitempty" gorm:"many2many:user_roles;"`
 }
 
 type Role struct {

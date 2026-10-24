@@ -26,6 +26,11 @@ export function LoginPage() {
     mutationFn: authApi.login,
     onSuccess: async (result) => {
       setSession(result);
+      if (result.user.mustChangePassword) {
+        void message.warning("首次登录请先修改初始密码");
+        navigate("/change-password", { replace: true });
+        return;
+      }
       void message.success(`欢迎回来，${result.user.displayName}`);
       navigate(targetPath, { replace: true });
     },

@@ -1816,8 +1816,14 @@ func testConfig(t *testing.T) *config.Config {
 
 func loginAndToken(t *testing.T, router http.Handler) string {
 	t.Helper()
+	// 首启管理员带 MustChangePassword 标记，业务接口会 403；
+	// 登录后立即改密清标记（幂等：同一测试内二次调用走新口令）。
 	loginBody := []byte(`{"username":"admin","password":"admin123456"}`)
 	loginResp := performRequest(router, http.MethodPost, "/api/auth/login", loginBody, "")
+	if loginResp.Code != http.StatusOK {
+		loginBody = []byte(`{"username":"admin","password":"aegisops-test-pass"}`)
+		loginResp = performRequest(router, http.MethodPost, "/api/auth/login", loginBody, "")
+	}
 	if loginResp.Code != http.StatusOK {
 		t.Fatalf("POST /api/auth/login status = %d, want %d; body=%s", loginResp.Code, http.StatusOK, loginResp.Body.String())
 	}
@@ -1844,7 +1850,13 @@ func loginAndToken(t *testing.T, router http.Handler) string {
 	if loginPayload.Data.Tokens.AccessToken == "" {
 		t.Fatal("login response did not include access token")
 	}
-	return loginPayload.Data.Tokens.AccessToken
+	token := loginPayload.Data.Tokens.AccessToken
+	changeBody := []byte(`{"oldPassword":"admin123456","newPassword":"aegisops-test-pass"}`)
+	changeResp := performRequest(router, http.MethodPost, "/api/auth/change-password", changeBody, token)
+	if changeResp.Code != http.StatusOK && changeResp.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/auth/change-password status = %d; body=%s", changeResp.Code, changeResp.Body.String())
+	}
+	return token
 }
 
 func decodeID(t *testing.T, body []byte) string {

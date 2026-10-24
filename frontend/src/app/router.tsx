@@ -6,6 +6,9 @@ import { AppShell } from "../layouts/AppShell";
 import { useSessionStore } from "../store/sessionStore";
 
 const LoginPage = lazy(() => import("../pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
+const ChangePasswordPage = lazy(() =>
+  import("../pages/auth/ChangePasswordPage").then((module) => ({ default: module.ChangePasswordPage })),
+);
 const SetupAdminPage = lazy(() => import("../pages/auth/SetupAdminPage").then((module) => ({ default: module.SetupAdminPage })));
 const DashboardPage = lazy(() => import("../pages/dashboard/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const HostsPage = lazy(() => import("../pages/assets/HostsPage").then((module) => ({ default: module.HostsPage })));
@@ -77,6 +80,15 @@ export const router = createBrowserRouter([
       </LazyPage>
     ),
     handle: { title: "登录" },
+  },
+  {
+    path: "/change-password",
+    element: (
+      <LazyPage>
+        <ChangePasswordPage />
+      </LazyPage>
+    ),
+    handle: { title: "修改初始密码" },
   },
   {
     path: "/",

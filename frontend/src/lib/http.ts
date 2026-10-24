@@ -32,6 +32,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (response.status === 401) {
       useSessionStore.getState().clearSession();
     }
+    if (
+      response.status === 403 &&
+      payload?.code === "MUST_CHANGE_PASSWORD" &&
+      typeof window !== "undefined" &&
+      !window.location.pathname.startsWith("/change-password")
+    ) {
+      window.location.assign("/change-password");
+    }
     throw new ApiError({
       status: response.status,
       code: payload?.code ?? "HTTP_ERROR",
