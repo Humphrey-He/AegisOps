@@ -1,5 +1,39 @@
 # AegisOps 正式 Release 验收清单
 
+## 0.2 v1.7.0 发布验收记录（2026-10-25）
+
+### 发布信息
+
+- 版本号：v1.7.0
+- Tag：`v1.7.0`
+- 发布日期：2026-10-25
+- 发布人：Humphrey-He
+- 主题：生产化增强第一轮（Prometheus /metrics 自监控 + 数据库迁移版本化）
+
+### 本次范围（每项独立提交，均带测试）
+
+| 项 | 内容 | 提交 |
+|---|---|---|
+| feat(metrics) | Prometheus 指标：包级 registry（Go/进程 collector + 8 个 aegisops_ 指标）、HTTP 中间件计数与耗时（路由模板归一防标签基数爆炸）、独立 `:9091` 端口（`metrics.enabled` 可关） | 1f3737e |
+| feat(task) | 任务派发/调度埋点：抢占 won/lost、执行耗时直方图、终态计数、重试计数、worker 错误、调度入队计数 | 4211926 |
+| feat(db) | 数据库迁移版本化：`schema_migrations` 版本表 + 有序前向迁移（每条事务化 + 降级保护）；0001 冻结 v1.6.0 baseline（存量库原地升级不丢数据），0002 派发抢占复合索引；`db.AutoMigrate` 从公共 API 移除，全部调用点走 `db.Migrate` | 6c810fc |
+| ci(db) | backend job 增加 postgres:16 service 并注入 `AEGISOPS_TEST_POSTGRES_DSN`，双驱动迁移用例（一次性建删测试库）每次 push 实测 | da059be |
+
+### 验收结果（2026-10-25 本地 · Windows / Go 1.25 / Node 22）
+
+- 后端测试：**通过**。`go build` ✅ `go vet` ✅ `go test ./... -count=1` **19 包全绿**（v1.6.0 为 17 包；新增 internal/metrics 测试包与 internal/db 7 个迁移用例）
+- 前端构建：**通过**。`npm run build`（tsc -b && vite build）成功，dist 重建后随仓库提交（内嵌产物与源码状态对齐）
+- 单二进制冒烟（SQLite 全新库）：**通过**。迁移自动应用 2 条（日志 `database migrations applied {"count":2,"total":2}`）、内嵌 UI `/` 200、`/login` SPA 回退 200、登录 200、`/api` 未知路径 JSON 404、`:9091/metrics` 输出 aegisops_ 与 go_/process_ 指标
+- 迁移专项（单测覆盖）：干净库一键到最新 ✅；存量 v1.6.0 库（无版本表 + 预置数据）原地升级不丢数据 ✅；坏迁移事务回滚且报错带迁移 ID ✅；重复运行幂等 ✅；降级保护（库里有二进制不认识的迁移 ID 时拒绝启动）✅；重启幂等（第二次启动 0 条迁移）冒烟实测 ✅
+- PostgreSQL 双驱动：本地无 Docker/PostgreSQL 环境，用例已就位（gated on `AEGISOPS_TEST_POSTGRES_DSN`，一次性建删测试库）且 CI 已配 postgres:16 service，**首验随本次发布 push 执行，结果回填本记录**
+- 已知边界（较 v1.6.0 变化）：迁移版本化与 /metrics 自监控已收口；剩余——通知通道仍为模板实现、多实例部署未验证、RBAC 每请求查库无缓存、redact 导出遮蔽 fail-open、主钥静态无 KMS
+
+### 定级
+
+**v1.7.0 = 稳定演示版（RC 级）。** 正式 Release 的两个前置条件中「迁移版本化」已收口；剩余「真实资源冒烟」（主机 SSH / Docker / Service / Nginx 真实链路）待具备真实环境后执行，完成后按 §10 重新定级。
+
+---
+
 ## 0.1 v1.6.0 发布验收记录（2026-10-24）
 
 ### 发布信息
