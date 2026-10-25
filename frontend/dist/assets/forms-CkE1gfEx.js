@@ -1,0 +1,1 @@
+import{c as i}from"./index-BcaYCg42.js";function o(e,r){!(r instanceof i)||!r.fieldErrors||e.setFields(Object.entries(r.fieldErrors).map(([s,t])=>({name:s,errors:[t]})))}function a(e,r="请求失败，请稍后再试。"){return e instanceof Error?e.message:r}export{o as a,a as g};

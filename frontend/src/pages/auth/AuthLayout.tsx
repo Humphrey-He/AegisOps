@@ -64,12 +64,14 @@ export function AuthLayout({
 
     async function probeApiReadiness() {
       try {
-        const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        // 探活只关心 API 可达性，用免鉴权的 /healthz：
+        // 之前打 /auth/me 会产生无 token 的 401 日志噪音，且和真实鉴权请求难以区分。
+        const response = await fetch(`${API_BASE_URL}/healthz`, {
           method: "GET",
           signal: controller.signal,
         });
 
-        if (response.ok || response.status === 401 || response.status === 403) {
+        if (response.ok) {
           setApiReachability("ready");
           return;
         }
