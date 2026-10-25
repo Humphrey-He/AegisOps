@@ -10,6 +10,20 @@ jobs:
     name: Backend (build / vet / test)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: aegisops
+          POSTGRES_USER: aegisops
+          POSTGRES_PASSWORD: aegisops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aegisops -d aegisops"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +40,10 @@ jobs:
 
       - name: Test
         run: go test ./... -count=1
+        env:
+          # 触发 internal/db 的 PostgreSQL 迁移双驱动用例
+          # （一次性建删测试库，不触碰业务库；未设置时该用例自动跳过）
+          AEGISOPS_TEST_POSTGRES_DSN: postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable
 
   frontend:
     name: Frontend (install / build)
