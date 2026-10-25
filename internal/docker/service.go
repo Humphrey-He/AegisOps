@@ -16,6 +16,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	mounttypes "github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -440,6 +441,9 @@ func (s *Service) DeployContainer(ctx context.Context, req DeployRequest) (*Depl
 	if name == "" {
 		name = req.ServiceCode
 	}
+	if err := s.removeServiceContainers(ctx, cli, req.ServiceID); err != nil {
+		return nil, err
+	}
 	if err := s.removeExistingServiceContainer(ctx, cli, name, req.ServiceID); err != nil {
 		return nil, err
 	}
@@ -530,6 +534,31 @@ func (s *Service) ValidateDeploy(ctx context.Context, req DeployRequest) error {
 		return nil
 	}
 	return fmt.Errorf("inspect container %s: %w", name, err)
+}
+
+// removeServiceContainers 按服务标签移除该服务旧版本的全部容器。
+// 容器名带版本号（如 code-v1 / code-v2），按名字找不到旧版本；
+// 升级/回滚时若不按 aegisops.service.id 标签清理，旧容器会一直占用
+// 宿主端口，新容器 PortBindings 冲突导致发布失败（真实资源冒烟实测发现）。
+func (s *Service) removeServiceContainers(ctx context.Context, cli *client.Client, serviceID string) error {
+	if strings.TrimSpace(serviceID) == "" {
+		return nil
+	}
+	list, err := cli.ContainerList(ctx, dockertypes.ContainerListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", "aegisops.service.id="+serviceID)),
+	})
+	if err != nil {
+		return fmt.Errorf("list service containers: %w", err)
+	}
+	for _, item := range list {
+		stopTimeout := 10
+		_ = cli.ContainerStop(ctx, item.ID, containertypes.StopOptions{Timeout: &stopTimeout})
+		if err := cli.ContainerRemove(ctx, item.ID, dockertypes.ContainerRemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("remove service container %s: %w", item.ID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) removeExistingServiceContainer(ctx context.Context, cli *client.Client, name, serviceID string) error {
