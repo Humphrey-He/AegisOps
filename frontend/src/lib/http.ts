@@ -29,7 +29,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (!response.ok || !payload) {
     const traceId = payload?.traceId ?? crypto.randomUUID();
     const message = payload?.message ?? `请求失败 (${response.status})`;
-    if (response.status === 401) {
+    if (response.status === 401 && payload?.code !== "INVALID_CREDENTIALS") {
+      // 401 有两种语义：会话失效（UNAUTHORIZED——清会话回登录页）与
+      // 业务凭据校验失败（如改密时旧密码错误 INVALID_CREDENTIALS——保留会话）。
+      // 不区分的话，首启改密输错一次旧密码就会清掉刚登录的新会话，
+      // 之后所有重试都变成 "missing bearer token"，用户永远无法完成改密。
       useSessionStore.getState().clearSession();
     }
     if (
@@ -78,7 +82,7 @@ async function download(path: string, options: Omit<RequestOptions, "body"> = {}
 
     const traceId = payload?.traceId ?? crypto.randomUUID();
     const message = payload?.message ?? `请求失败 (${response.status})`;
-    if (response.status === 401) {
+    if (response.status === 401 && payload?.code !== "INVALID_CREDENTIALS") {
       useSessionStore.getState().clearSession();
     }
     throw new ApiError({
