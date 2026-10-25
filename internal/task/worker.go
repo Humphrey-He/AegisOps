@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/Humphrey-He/AegisOps/internal/metrics"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 )
 
@@ -47,8 +48,11 @@ func (w *Worker) Run(ctx context.Context, opts WorkerOptions) {
 		interval = time.Minute
 	}
 	runOnce := func() {
-		if _, err := w.RunOnce(ctx, opts); err != nil && opts.OnError != nil {
-			opts.OnError(err)
+		if _, err := w.RunOnce(ctx, opts); err != nil {
+			metrics.WorkerErrors.Inc()
+			if opts.OnError != nil {
+				opts.OnError(err)
+			}
 		}
 	}
 	runOnce()
@@ -184,7 +188,12 @@ func claimDispatchTx(tx *gorm.DB, dispatch model.TaskDispatch, owner string, lea
 	if result.Error != nil {
 		return false, result.Error
 	}
-	return result.RowsAffected > 0, nil
+	if result.RowsAffected > 0 {
+		metrics.DispatchClaims.WithLabelValues("won").Inc()
+		return true, nil
+	}
+	metrics.DispatchClaims.WithLabelValues("lost").Inc()
+	return false, nil
 }
 
 func (w *Worker) execute(ctx context.Context, task model.Task, dispatch model.TaskDispatch, executor DispatchExecutor) error {
@@ -194,7 +203,9 @@ func (w *Worker) execute(ctx context.Context, task model.Task, dispatch model.Ta
 	}
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	execStart := time.Now()
 	result, err := executor(execCtx, task, dispatch)
+	metrics.DispatchDuration.WithLabelValues(strings.TrimSpace(task.Type)).Observe(time.Since(execStart).Seconds())
 	if err == nil && execCtx.Err() != nil {
 		err = execCtx.Err()
 	}
@@ -214,7 +225,8 @@ func (w *Worker) retryDispatch(ctx context.Context, dispatch model.TaskDispatch,
 	now := w.now().UTC()
 	w.service.writeMu.Lock()
 	defer w.service.writeMu.Unlock()
-	return w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var retried bool
+	err := w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var latest model.TaskDispatch
 		if err := tx.First(&latest, "id = ?", dispatch.ID).Error; err != nil {
 			return err
@@ -233,18 +245,27 @@ func (w *Worker) retryDispatch(ctx context.Context, dispatch model.TaskDispatch,
 		}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.Task{}).Where("id = ?", dispatch.TaskID).Updates(map[string]any{
+		if err := tx.Model(&model.Task{}).Where("id = ?", dispatch.TaskID).Updates(map[string]any{
 			"status": model.TaskStatusPending,
 			"error":  errMessage,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		retried = true
+		return nil
 	})
+	if retried {
+		metrics.DispatchRetries.Inc()
+	}
+	return err
 }
 
 func (w *Worker) finishDispatch(ctx context.Context, taskID string, dispatch model.TaskDispatch, dispatchStatus model.TaskDispatchStatus, taskStatus model.TaskStatus, result, errMessage string) error {
 	now := w.now().UTC()
 	w.service.writeMu.Lock()
 	defer w.service.writeMu.Unlock()
-	return w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var completed bool
+	err := w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var latest model.TaskDispatch
 		if err := tx.First(&latest, "id = ?", dispatch.ID).Error; err != nil {
 			return err
@@ -260,13 +281,21 @@ func (w *Worker) finishDispatch(ctx context.Context, taskID string, dispatch mod
 		}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{
+		if err := tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{
 			"status":      taskStatus,
 			"result":      result,
 			"error":       errMessage,
 			"finished_at": &now,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		completed = true
+		return nil
 	})
+	if completed {
+		metrics.DispatchCompletions.WithLabelValues(string(dispatchStatus)).Inc()
+	}
+	return err
 }
 
 func defaultDispatchExecutor(ctx context.Context, task model.Task, dispatch model.TaskDispatch) (string, error) {

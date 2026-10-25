@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/Humphrey-He/AegisOps/internal/metrics"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 )
 
@@ -181,6 +182,7 @@ func (s *Service) DispatchDueJobs(ctx context.Context, limit int) ([]model.TaskD
 		}
 		if dispatch != nil {
 			dispatches = append(dispatches, *dispatch)
+			metrics.SchedulerDispatches.Inc()
 		}
 	}
 	return dispatches, errors.Join(errs...)
