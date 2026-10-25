@@ -7,7 +7,7 @@
 
 `AegisOps` 是一个面向轻量运维控制面、应用交付与稳定性治理的 DevOps 平台项目。
 
-当前仓库最新版本为 `v1.6.0`：在 v1.5.12 基线上完成一轮安全加固（SSH 主机密钥钉扎、登录限流、首启强制改密、任务抢占并发修复、secret 包测试补齐）并支持**单二进制分发**（前端经 go:embed 内嵌）。`go test ./...` 18 包全绿，CI 全绿。主干在此之上已并入 **Prometheus `/metrics` 自监控**（独立端口 `:9091`，将随 v1.7.0 发版收口）。
+当前仓库最新版本为 `v1.6.0`：在 v1.5.12 基线上完成一轮安全加固（SSH 主机密钥钉扎、登录限流、首启强制改密、任务抢占并发修复、secret 包测试补齐）并支持**单二进制分发**（前端经 go:embed 内嵌）。`go test ./...` 18 包全绿，CI 全绿。主干在此之上已并入 **Prometheus `/metrics` 自监控**（独立端口 `:9091`）与**数据库迁移版本化**（schema_migrations + 有序增量迁移），将随 v1.7.0 发版收口。
 
 ## 快速启动（单二进制，2 条命令）
 
@@ -73,6 +73,7 @@ AegisOps 更适合以下场景：
   - 任务派发多实例抢占安全（条件更新 + RowsAffected 校验 + 租约）
   - Demo 数据注入
   - PostgreSQL 主阶段支持，SQLite 作为可选轻量模式
+  - **数据库迁移版本化**：`schema_migrations` 版本表 + 有序增量迁移，启动时自动执行；SQLite/PostgreSQL 双驱动（CI 每次跑真实 Postgres 用例）；存量 v1.6.x 库原地升级不丢数据，坏迁移事务回滚并报错停止
   - **单二进制分发**：前端产物经 go:embed 内嵌，`go build` 产出即全量
   - **Prometheus /metrics 自监控**（独立端口 `:9091`，`metrics.enabled` 可关）：Go 运行时/进程指标、HTTP 请求计数与耗时（按路由模板）、任务派发抢占/执行/重试/终态、调度入队与 worker 错误计数
 
@@ -174,6 +175,12 @@ go run ./cmd/aegisops
 
 - PostgreSQL: `postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable`
 - SQLite 可选示例配置：`configs/config.sqlite.example.yaml`
+
+数据库迁移说明：
+
+- 启动时自动执行版本化迁移：`schema_migrations` 版本表记录已应用迁移，干净库一键迁到最新，存量 v1.6.x 库原地升级不丢数据
+- 迁移实现在 `internal/db/`（`migrate.go` runner + 按编号命名的迁移文件），每条迁移在单事务内执行，失败即回滚并停止
+- **改 model 必须配套编号迁移**：`0001_baseline_v1_6_0` 是唯一保留的全量 AutoMigrate（冻结点），之后的 schema 变更一律走增量迁移并追加到 `migrations.go` 列表末尾
 
 默认管理员账号：
 
@@ -316,9 +323,9 @@ docker compose -f deploy/postgres/docker-compose.yaml up -d
 当前仓库可以定义为：
 
 - 已完成 `v1.6.0` 版本基线：v1.5.12 的稳定演示基线 + 一轮安全加固 + 单二进制分发
-- 主干已并入 Prometheus `/metrics` 自监控（独立端口，详见上文能力清单）
+- 主干已并入 Prometheus `/metrics` 自监控与数据库迁移版本化（详见上文能力清单）
 - 已具备本地运行、功能演示、接口联调、继续二期开发的稳定基础
-- 后续重点会从 `v1.6.x` 收口转向"生产化增强、外部集成增强、二期专项建设"（迁移版本化、真实通知通道等仍是已知边界，见 Release 验收清单）
+- 后续重点会从 `v1.6.x` 收口转向"生产化增强、外部集成增强、二期专项建设"（真实通知通道等仍是已知边界，见 Release 验收清单）
 
 如果你把它当作个人项目来看，它已经足够像一个真实运维平台；
 如果你把它当作长期产品来看，二期的重点会更偏向“把已经搭起来的控制面，继续打磨成更稳、更细、更强的生产系统”。

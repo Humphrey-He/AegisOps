@@ -24,7 +24,7 @@ func newAuthService(t *testing.T) (*Service, func()) {
 	if err != nil {
 		t.Fatalf("get sql database: %v", err)
 	}
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	service := NewService(database, Config{})

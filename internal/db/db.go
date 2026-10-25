@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Humphrey-He/AegisOps/internal/config"
-	"github.com/Humphrey-He/AegisOps/internal/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -74,10 +73,6 @@ func normalizeDriver(driver string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(driver))
 	}
-}
-
-func AutoMigrate(database *gorm.DB) error {
-	return database.AutoMigrate(model.AllModels()...)
 }
 
 func ensureSQLiteDir(dsn string) error {

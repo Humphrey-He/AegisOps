@@ -47,8 +47,17 @@ func main() {
 	if err != nil {
 		log.Fatal("open database", zap.Error(err))
 	}
-	if err := db.AutoMigrate(database); err != nil {
-		log.Fatal("auto migrate database", zap.Error(err))
+	appliedBefore, err := db.AppliedMigrations(database)
+	if err != nil {
+		log.Fatal("load database migrations", zap.Error(err))
+	}
+	if err := db.Migrate(database); err != nil {
+		log.Fatal("run database migrations", zap.Error(err))
+	}
+	if applied, err := db.AppliedMigrations(database); err == nil && len(applied) > len(appliedBefore) {
+		log.Info("database migrations applied",
+			zap.Int("count", len(applied)-len(appliedBefore)),
+			zap.Int("total", len(applied)))
 	}
 
 	router := server.NewRouter(cfg, database, log)

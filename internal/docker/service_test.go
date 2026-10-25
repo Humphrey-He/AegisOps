@@ -113,7 +113,7 @@ func openDockerTestServices(t *testing.T) (*gorm.DB, *secretsvc.Service) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	secretService, err := secretsvc.NewService(database, "test-master-key")

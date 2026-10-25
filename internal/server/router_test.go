@@ -41,7 +41,7 @@ func TestSmokeHealthLoginAndMe(t *testing.T) {
 	t.Cleanup(func() {
 		_ = sqlDB.Close()
 	})
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestRegistryCRUDSmoke(t *testing.T) {
 	t.Cleanup(func() {
 		_ = sqlDB.Close()
 	})
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestRegistryDeleteRejectsServiceReference(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestEnvironmentRoutesFilterResourcesAndProtectDelete(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestServiceReleaseSmoke(t *testing.T) {
 	t.Cleanup(func() {
 		_ = sqlDB.Close()
 	})
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -388,7 +388,7 @@ func TestSystemRoutesRequireRBAC(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -438,7 +438,7 @@ func TestResourceWorkbenchFiltersTasksAndAudits(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -535,7 +535,7 @@ func TestDashboardRiskAndResourceContext(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -694,7 +694,7 @@ func TestTaskAndAlertContextCloseTroubleshootingLoop(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -797,7 +797,7 @@ func TestPermissionsEndpointBackfillsMissingSeedPermissions(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -853,7 +853,7 @@ func TestNotificationAlertAndHealthRoutesSmoke(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -963,7 +963,7 @@ func TestExportBackupRoutesSmoke(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1051,7 +1051,7 @@ func TestUnmaskedExportBackupRequiresDedicatedPermissions(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1182,7 +1182,7 @@ func TestBackupManifestUsesPostgresPlaceholderWhenConfigured(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1251,7 +1251,7 @@ func TestSecuritySchedulerRoutesSmoke(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1393,7 +1393,7 @@ func TestNotificationLegacyConfigIsSecretized(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1438,7 +1438,7 @@ func TestSecretRotationRequiresDedicatedPermission(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1538,7 +1538,7 @@ func TestHighRiskRoutesRequireDedicatedPermissions(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1593,7 +1593,7 @@ func TestTaskDispatchOperationsSmoke(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1683,7 +1683,7 @@ func TestTaskDispatchOperationsRequireDedicatedPermissions(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1736,7 +1736,7 @@ func TestTerminalWebSocketRouteRequiresAuthAndSession(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
@@ -1766,7 +1766,7 @@ func TestTerminalWebSocketRouteRequiresUpgradeForExistingSession(t *testing.T) {
 		t.Fatalf("get sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	session := model.TerminalSession{
@@ -1830,7 +1830,7 @@ func TestEmbeddedServesFrontend(t *testing.T) {
 	t.Cleanup(func() {
 		_ = sqlDB.Close()
 	})
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	router := NewRouter(cfg, database, zap.NewNop())

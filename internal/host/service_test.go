@@ -236,7 +236,7 @@ func openHostTestServices(t *testing.T) (*gorm.DB, *secret.Service) {
 		_ = sqlDB.Close()
 	})
 
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 

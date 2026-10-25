@@ -88,7 +88,7 @@ func openEnvironmentTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sql database: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return database

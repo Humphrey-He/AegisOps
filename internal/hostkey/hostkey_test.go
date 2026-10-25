@@ -28,7 +28,7 @@ func newHostWithDB(t *testing.T) (*gorm.DB, *model.Host, func()) {
 	if err != nil {
 		t.Fatalf("get sql database: %v", err)
 	}
-	if err := db.AutoMigrate(database); err != nil {
+	if err := db.Migrate(database); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	host := &model.Host{ID: "host-1", Name: "web-1", Address: "127.0.0.1", SSHUser: "root"}
