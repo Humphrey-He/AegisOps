@@ -92,8 +92,13 @@ func (w *Worker) RunOnce(ctx context.Context, opts WorkerOptions) (int, error) {
 	cutoff := w.now().UTC()
 	maxConsecutiveLostClaims := limit
 	lostClaims := 0
+	// 本轮已处理过的派发不再认领：重试派发的 queued_at 是本轮进行中写入的，
+	// 时钟粒度粗时可能与本轮 cutoff 量化相等而满足 queued_at <= cutoff 被立刻
+	// 捞回，同一轮连烧全部重试次数。按 ID 排除与时钟无关，语义也是对的——
+	// 重试应该等下一轮（生产环境即下一个 worker tick）。
+	handled := make([]string, 0, limit)
 	for processed < limit {
-		task, dispatch, err := w.claimNext(ctx, owner, leaseDuration, cutoff)
+		task, dispatch, err := w.claimNext(ctx, owner, leaseDuration, cutoff, handled)
 		if err != nil {
 			if errors.Is(err, ErrClaimLost) {
 				// 另一个实例刚抢走了这条派发：不算处理数，继续认领下一条。
@@ -109,6 +114,7 @@ func (w *Worker) RunOnce(ctx context.Context, opts WorkerOptions) (int, error) {
 			errs = append(errs, err)
 			break
 		}
+		handled = append(handled, dispatch.ID)
 		lostClaims = 0
 		processed++
 		if err := w.execute(ctx, task, dispatch, executor); err != nil {
@@ -123,7 +129,7 @@ func (w *Worker) RunOnce(ctx context.Context, opts WorkerOptions) (int, error) {
 	return processed, errors.Join(errs...)
 }
 
-func (w *Worker) claimNext(ctx context.Context, owner string, leaseDuration time.Duration, cutoff time.Time) (model.Task, model.TaskDispatch, error) {
+func (w *Worker) claimNext(ctx context.Context, owner string, leaseDuration time.Duration, cutoff time.Time, excludeIDs []string) (model.Task, model.TaskDispatch, error) {
 	now := w.now().UTC()
 	leaseExpiresAt := now.Add(leaseDuration)
 	var task model.Task
@@ -131,7 +137,11 @@ func (w *Worker) claimNext(ctx context.Context, owner string, leaseDuration time
 	w.service.writeMu.Lock()
 	defer w.service.writeMu.Unlock()
 	err := w.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("status = ? AND queued_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", model.TaskDispatchStatusPending, cutoff, now).
+		query := tx.Where("status = ? AND queued_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", model.TaskDispatchStatusPending, cutoff, now)
+		if len(excludeIDs) > 0 {
+			query = query.Where("id NOT IN ?", excludeIDs)
+		}
+		if err := query.
 			Order("queued_at ASC, created_at ASC").
 			First(&dispatch).Error; err != nil {
 			return err
