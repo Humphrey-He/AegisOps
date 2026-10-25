@@ -152,7 +152,7 @@ scripts/     本地辅助脚本
 
 环境要求：
 
-- Go 1.24+
+- Go 1.27+（go.mod 指定 1.27.3；`GOTOOLCHAIN=auto` 时低版本 Go 会自动下载对应工具链）
 - Windows / Linux / macOS
 
 启动命令：
