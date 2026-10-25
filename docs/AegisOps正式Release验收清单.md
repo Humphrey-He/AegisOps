@@ -25,7 +25,7 @@
 - 前端构建：**通过**。`npm run build`（tsc -b && vite build）成功，dist 重建后随仓库提交（内嵌产物与源码状态对齐）
 - 单二进制冒烟（SQLite 全新库）：**通过**。迁移自动应用 2 条（日志 `database migrations applied {"count":2,"total":2}`）、内嵌 UI `/` 200、`/login` SPA 回退 200、登录 200、`/api` 未知路径 JSON 404、`:9091/metrics` 输出 aegisops_ 与 go_/process_ 指标
 - 迁移专项（单测覆盖）：干净库一键到最新 ✅；存量 v1.6.0 库（无版本表 + 预置数据）原地升级不丢数据 ✅；坏迁移事务回滚且报错带迁移 ID ✅；重复运行幂等 ✅；降级保护（库里有二进制不认识的迁移 ID 时拒绝启动）✅；重启幂等（第二次启动 0 条迁移）冒烟实测 ✅
-- PostgreSQL 双驱动：本地无 Docker/PostgreSQL 环境，用例已就位（gated on `AEGISOPS_TEST_POSTGRES_DSN`，一次性建删测试库）且 CI 已配 postgres:16 service，**首验随本次发布 push 执行，结果回填本记录**
+- PostgreSQL 双驱动：**CI 实测通过**（postgres:16 service；干净迁移 + 存量升级两场景全绿，run `8a3ac13` success）。过程记录：首跑（`3f49988`）失败——测试代码用 `strings.Replace` 改写 DSN 库名时命中了用户名部分，导致连接不存在的用户；修复为 URL 解析仅改路径并补单元测试（`8a3ac13`）后复跑全绿。该缺陷仅存在于测试代码路径，不影响发布产物与运行时行为
 - 已知边界（较 v1.6.0 变化）：迁移版本化与 /metrics 自监控已收口；剩余——通知通道仍为模板实现、多实例部署未验证、RBAC 每请求查库无缓存、redact 导出遮蔽 fail-open、主钥静态无 KMS
 
 ### 定级
