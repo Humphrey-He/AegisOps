@@ -316,6 +316,7 @@ docker compose -f deploy/postgres/docker-compose.yaml up -d
 - [AegisOps二期专项规划：通知告警与健康检查闭环](./docs/AegisOps二期专项规划：通知告警与健康检查闭环.md)
 - [AegisOps二期专项规划：导出、备份与故障排查包](./docs/AegisOps二期专项规划：导出、备份与故障排查包.md)
 - [AegisOps二期专项规划：权限细粒度、密钥管理与任务调度](./docs/AegisOps二期专项规划：权限细粒度、密钥管理与任务调度.md)
+- [AegisOps企业级增强设计：SSO登录、变更审批与资源范围权限](./docs/AegisOps企业级增强设计：SSO登录、变更审批与资源范围权限.md)
 - [AegisOps正式Release验收清单](./docs/AegisOps正式Release验收清单.md)
 
 ## 当前阶段说明
