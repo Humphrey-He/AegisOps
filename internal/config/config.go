@@ -10,6 +10,7 @@ import (
 type Config struct {
 	App          AppConfig          `mapstructure:"app"`
 	HTTP         HTTPConfig         `mapstructure:"http"`
+	Metrics      MetricsConfig      `mapstructure:"metrics"`
 	Database     DatabaseConfig     `mapstructure:"database"`
 	Security     SecurityConfig     `mapstructure:"security"`
 	Admin        AdminConfig        `mapstructure:"admin"`
@@ -23,6 +24,13 @@ type AppConfig struct {
 
 type HTTPConfig struct {
 	Addr string `mapstructure:"addr"`
+}
+
+// MetricsConfig 控制 Prometheus /metrics 端点。
+// 独立端口、无鉴权：靠网络层隔离（只绑内网/localhost），不进 JWT 中间件链。
+type MetricsConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Addr    string `mapstructure:"addr"`
 }
 
 type DatabaseConfig struct {
@@ -77,6 +85,8 @@ func newViper() *viper.Viper {
 	v.SetDefault("app.name", "aegisops")
 	v.SetDefault("app.env", "dev")
 	v.SetDefault("http.addr", ":8080")
+	v.SetDefault("metrics.enabled", true)
+	v.SetDefault("metrics.addr", ":9091")
 	v.SetDefault("database.driver", "postgres")
 	v.SetDefault("database.dsn", "postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable")
 	v.SetDefault("security.access_token_ttl", "2h")

@@ -16,6 +16,7 @@ import (
 	healthsvc "github.com/Humphrey-He/AegisOps/internal/healthcheck"
 	hostsvc "github.com/Humphrey-He/AegisOps/internal/host"
 	"github.com/Humphrey-He/AegisOps/internal/logger"
+	"github.com/Humphrey-He/AegisOps/internal/metrics"
 	"github.com/Humphrey-He/AegisOps/internal/model"
 	nginxsvc "github.com/Humphrey-He/AegisOps/internal/nginx"
 	notificationsvc "github.com/Humphrey-He/AegisOps/internal/notification"
@@ -115,6 +116,22 @@ func main() {
 		}
 	}()
 
+	// Prometheus 指标独立端口，无鉴权，靠网络层隔离；enabled=false 可整体关闭。
+	var metricsServer *http.Server
+	if cfg.Metrics.Enabled {
+		metricsServer = &http.Server{
+			Addr:              cfg.Metrics.Addr,
+			Handler:           metrics.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			log.Info("aegisops metrics listening", zap.String("addr", cfg.Metrics.Addr))
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal("metrics server failed", zap.Error(err))
+			}
+		}()
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -124,5 +141,10 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Error("http server shutdown failed", zap.Error(err))
+	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(ctx); err != nil {
+			log.Error("metrics server shutdown failed", zap.Error(err))
+		}
 	}
 }

@@ -7,7 +7,7 @@
 
 `AegisOps` 是一个面向轻量运维控制面、应用交付与稳定性治理的 DevOps 平台项目。
 
-当前仓库最新版本为 `v1.6.0`：在 v1.5.12 基线上完成一轮安全加固（SSH 主机密钥钉扎、登录限流、首启强制改密、任务抢占并发修复、secret 包测试补齐）并支持**单二进制分发**（前端经 go:embed 内嵌）。`go test ./...` 17 包全绿，CI 全绿。
+当前仓库最新版本为 `v1.6.0`：在 v1.5.12 基线上完成一轮安全加固（SSH 主机密钥钉扎、登录限流、首启强制改密、任务抢占并发修复、secret 包测试补齐）并支持**单二进制分发**（前端经 go:embed 内嵌）。`go test ./...` 18 包全绿，CI 全绿。主干在此之上已并入 **Prometheus `/metrics` 自监控**（独立端口 `:9091`，将随 v1.7.0 发版收口）。
 
 ## 快速启动（单二进制，2 条命令）
 
@@ -33,7 +33,7 @@ AegisOps 更适合以下场景：
 
 它当前更偏向“单机可运行、链路可验证、领域建模完整”的轻量平台，而不是大规模多租户 SaaS。
 
-## v1.6.0 已提供的能力
+## 当前已提供的能力（v1.6.0 基线 + 主干增量）
 
 ### 后端能力
 
@@ -74,6 +74,7 @@ AegisOps 更适合以下场景：
   - Demo 数据注入
   - PostgreSQL 主阶段支持，SQLite 作为可选轻量模式
   - **单二进制分发**：前端产物经 go:embed 内嵌，`go build` 产出即全量
+  - **Prometheus /metrics 自监控**（独立端口 `:9091`，`metrics.enabled` 可关）：Go 运行时/进程指标、HTTP 请求计数与耗时（按路由模板）、任务派发抢占/执行/重试/终态、调度入队与 worker 错误计数
 
 ### 前端已落地页面
 
@@ -166,7 +167,8 @@ go run ./cmd/aegisops
 
 默认监听地址：
 
-- `:8080`
+- HTTP API 与控制台：`:8080`
+- Prometheus 指标：`:9091`（独立端口、无鉴权，`metrics.enabled: false` 可关闭）
 
 默认数据库：
 
@@ -224,6 +226,12 @@ Invoke-RestMethod http://127.0.0.1:8080/healthz
 Invoke-RestMethod http://127.0.0.1:8080/readyz
 ```
 
+指标端点（Prometheus 格式，独立端口、无鉴权，只应暴露给内网/监控网络）：
+
+```powershell
+(Invoke-WebRequest http://127.0.0.1:9091/metrics).Content | Select-String "aegisops_http_requests_total"
+```
+
 登录示例：
 
 ```powershell
@@ -273,6 +281,8 @@ npm run build
 
 ```powershell
 $env:AEGISOPS_HTTP_ADDR = ":18080"
+$env:AEGISOPS_METRICS_ENABLED = "true"
+$env:AEGISOPS_METRICS_ADDR = ":19091"
 $env:AEGISOPS_DATABASE_DRIVER = "postgres"
 $env:AEGISOPS_DATABASE_DSN = "postgres://aegisops:replace-me@127.0.0.1:5432/aegisops?sslmode=disable"
 $env:AEGISOPS_SECURITY_JWT_SECRET = "replace-me"
@@ -306,8 +316,9 @@ docker compose -f deploy/postgres/docker-compose.yaml up -d
 当前仓库可以定义为：
 
 - 已完成 `v1.6.0` 版本基线：v1.5.12 的稳定演示基线 + 一轮安全加固 + 单二进制分发
+- 主干已并入 Prometheus `/metrics` 自监控（独立端口，详见上文能力清单）
 - 已具备本地运行、功能演示、接口联调、继续二期开发的稳定基础
-- 后续重点会从 `v1.6.x` 收口转向"生产化增强、外部集成增强、二期专项建设"（迁移版本化、/metrics 自监控、真实通知通道等仍是已知边界，见 Release 验收清单）
+- 后续重点会从 `v1.6.x` 收口转向"生产化增强、外部集成增强、二期专项建设"（迁移版本化、真实通知通道等仍是已知边界，见 Release 验收清单）
 
 如果你把它当作个人项目来看，它已经足够像一个真实运维平台；
 如果你把它当作长期产品来看，二期的重点会更偏向“把已经搭起来的控制面，继续打磨成更稳、更细、更强的生产系统”。

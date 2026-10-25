@@ -5,6 +5,11 @@ app:
 http:
   addr: ":8080"
 
+# Prometheus 指标端点：独立端口、无鉴权，只应暴露给内网/监控网络
+metrics:
+  enabled: true
+  addr: ":9091"
+
 database:
   driver: postgres
   dsn: postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable
