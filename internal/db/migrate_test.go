@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"math/rand"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -218,6 +219,40 @@ func TestValidateMigrationsRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
+// withDatabaseName 替换 DSN 里的库名。必须走 URL 解析只改 Path：
+// DSN 形如 postgres://aegisops:aegisops@host/aegisops，朴素字符串替换
+// 会先命中用户名部分（"//aegisops:"），把用户名改坏导致连接失败。
+func withDatabaseName(dsn, name string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+	u.Path = "/" + strings.TrimPrefix(name, "/")
+	return u.String(), nil
+}
+
+func TestWithDatabaseNameRewritesOnlyPath(t *testing.T) {
+	t.Parallel()
+
+	got, err := withDatabaseName("postgres://aegisops:aegisops@127.0.0.1:5432/aegisops?sslmode=disable", "aegisops_migrate_test_42")
+	if err != nil {
+		t.Fatalf("withDatabaseName: %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse rewritten DSN: %v", err)
+	}
+	if u.User.Username() != "aegisops" {
+		t.Fatalf("username was rewritten: %q", u.User.Username())
+	}
+	if u.Path != "/aegisops_migrate_test_42" {
+		t.Fatalf("path = %q, want the test database", u.Path)
+	}
+	if u.RawQuery != "sslmode=disable" {
+		t.Fatalf("query lost: %q", u.RawQuery)
+	}
+}
+
 // PostgreSQL 双驱动验证：需要显式提供 DSN（CI 无 Postgres 服务，自动跳过）。
 // 测试在一次性数据库上运行，结束后删除，不触碰 DSN 指向的库。
 func TestMigratePostgresCleanAndLegacyUpgrade(t *testing.T) {
@@ -244,9 +279,13 @@ func TestMigratePostgresCleanAndLegacyUpgrade(t *testing.T) {
 		_ = admin.Exec(fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", testDBName)).Error
 	})
 
+	testDSN, err := withDatabaseName(dsn, testDBName)
+	if err != nil {
+		t.Fatalf("rewrite test DSN: %v", err)
+	}
 	database, err := Open(config.DatabaseConfig{
 		Driver: "postgres",
-		DSN:    strings.Replace(dsn, "/aegisops", "/"+testDBName, 1),
+		DSN:    testDSN,
 	})
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
