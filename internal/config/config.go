@@ -13,6 +13,7 @@ type Config struct {
 	Metrics      MetricsConfig      `mapstructure:"metrics"`
 	Database     DatabaseConfig     `mapstructure:"database"`
 	Security     SecurityConfig     `mapstructure:"security"`
+	Auth         AuthConfig         `mapstructure:"auth"`
 	Admin        AdminConfig        `mapstructure:"admin"`
 	Notification NotificationConfig `mapstructure:"notification"`
 }
@@ -49,6 +50,24 @@ type AdminConfig struct {
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	Email    string `mapstructure:"email"`
+}
+
+// OIDCProviderConfig 描述一个 OIDC Provider（企业 SSO）。
+// Providers 列表只支持 YAML 配置（viper 环境变量对列表支持有限）。
+type OIDCProviderConfig struct {
+	ID             string   `mapstructure:"id"`
+	DisplayName    string   `mapstructure:"display_name"`
+	Enabled        bool     `mapstructure:"enabled"`
+	Issuer         string   `mapstructure:"issuer"`
+	ClientID       string   `mapstructure:"client_id"`
+	ClientSecret   string   `mapstructure:"client_secret"`
+	Scopes         []string `mapstructure:"scopes"`
+	DefaultRoleCode string  `mapstructure:"default_role_code"`
+}
+
+// AuthConfig 承载认证类扩展配置；本地用户名密码登录不在此配置。
+type AuthConfig struct {
+	OIDC []OIDCProviderConfig `mapstructure:"oidc"`
 }
 
 type NotificationConfig struct {

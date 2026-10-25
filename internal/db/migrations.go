@@ -12,4 +12,5 @@ package db
 var Migrations = []*Migration{
 	migrationBaselineV1_6_0,
 	migrationDispatchClaimIndex,
+	migrationOIDCSSO,
 }

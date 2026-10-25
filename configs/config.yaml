@@ -20,6 +20,19 @@ security:
   refresh_token_ttl: 168h
   secret_key: "change-me-32-byte-secret-key!!!!!!"
 
+# OIDC SSO（可选，默认关闭）。providers 列表仅支持 YAML 配置。
+# auth:
+#   oidc:
+#     providers:
+#       - id: keycloak
+#         display_name: 企业账号
+#         enabled: true
+#         issuer: https://sso.example.com/realms/aegisops
+#         client_id: aegisops
+#         client_secret: change-me
+#         scopes: [openid, profile, email]
+#         default_role_code: viewer
+
 admin:
   username: admin
   password: admin123456

@@ -71,5 +71,7 @@ func AllModels() []any {
 		&BackupRecord{},
 		&ScheduledJob{},
 		&TaskDispatch{},
+		&OIDCState{},
+		&OIDCExchangeCode{},
 	}
 }

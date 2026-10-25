@@ -1,0 +1,11 @@
+auth:
+  oidc:
+    providers:
+      - id: keycloak
+        display_name: 企业账号
+        enabled: true
+        issuer: https://sso.example.com/realms/aegisops
+        client_id: aegisops
+        client_secret: change-me
+        scopes: [openid, profile, email]
+        default_role_code: viewer
